@@ -341,14 +341,8 @@ export async function POST(request: Request) {
       };
       collectDescendants(task.id);
       const archiveIds = [task.id, ...descendants.map((child) => child.id)];
-      const archiveClient = ["Admin", "Manager"].includes(context.profile.role)
-        ? context.client
-        : process.env.SUPABASE_SERVICE_ROLE_KEY
-          ? createSupabaseAdminClient()
-          : null;
-      if (!archiveClient) return fail("The server service key is required for creators to archive delegated work.", 503);
-      const { data: archivedRows, error: archiveError } = await archiveClient.from("tasks").update({ archived_at: new Date().toISOString() }).in("id", archiveIds).select("id");
-      if (archiveError) return fail(archiveError.message);
+      const { data: archivedRows, error: archiveError } = await context.client.rpc("archive_task_tree", { target_task_id: input.taskId });
+      if (archiveError) return fail(archiveError.code === "PGRST202" ? "Task archiving needs its database migration applied." : archiveError.message, archiveError.code === "PGRST202" ? 503 : 403);
       if (!archivedRows?.length) return fail("The task could not be archived.");
       return NextResponse.json({ ok: true, archivedTaskIds: archiveIds });
     }
