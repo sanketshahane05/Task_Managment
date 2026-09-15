@@ -8,6 +8,7 @@ export const runtime = "nodejs";
 const roleSchema = z.enum(["Admin", "Manager", "Senior Employee", "Employee"]);
 const statusSchema = z.enum(["Not started", "In progress", "Completed"]);
 const prioritySchema = z.enum(["High", "Medium", "Low"]);
+const recurrenceSchema = z.enum(["none", "daily", "weekly", "monthly"]);
 const actionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("invite_user"), name: z.string().trim().min(2).max(120), email: z.email().max(254), role: roleSchema }),
   z.object({ action: z.literal("create_user"), name: z.string().trim().min(2).max(120), email: z.string().trim().email().max(254), password: z.string().min(8).max(128), role: roleSchema }),
@@ -17,8 +18,8 @@ const actionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("delete_project"), projectId: z.string().min(1) }),
   z.object({ action: z.literal("archive_project"), projectId: z.string().min(1) }),
   z.object({ action: z.literal("restore_project"), projectId: z.string().min(1) }),
-  z.object({ action: z.literal("create_task"), title: z.string().trim().min(2).max(200), description: z.string().trim().max(5000).default(""), projectId: z.string().min(1), assigneeId: z.string().uuid(), parentId: z.string().nullable().optional(), priority: prioritySchema, startDate: z.iso.date(), dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }),
-  z.object({ action: z.literal("edit_task"), taskId: z.string().min(1), title: z.string().trim().min(2).max(200), description: z.string().trim().max(5000), assigneeId: z.string().uuid(), priority: prioritySchema, startDate: z.iso.date(), dueDate: z.iso.date() }),
+  z.object({ action: z.literal("create_task"), title: z.string().trim().min(2).max(200), description: z.string().trim().max(5000).default(""), projectId: z.string().min(1), assigneeId: z.string().uuid(), parentId: z.string().nullable().optional(), blockedById: z.string().nullable().optional(), milestone: z.boolean().default(false), milestoneDate: z.iso.date().nullable().optional(), recurrence: recurrenceSchema.default("none"), priority: prioritySchema, startDate: z.iso.date(), dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }),
+  z.object({ action: z.literal("edit_task"), taskId: z.string().min(1), title: z.string().trim().min(2).max(200), description: z.string().trim().max(5000), assigneeId: z.string().uuid(), blockedById: z.string().nullable().optional(), milestone: z.boolean().default(false), milestoneDate: z.iso.date().nullable().optional(), recurrence: recurrenceSchema.default("none"), priority: prioritySchema, startDate: z.iso.date(), dueDate: z.iso.date() }),
   z.object({ action: z.literal("delete_task"), taskId: z.string().min(1) }),
   z.object({ action: z.literal("restore_task"), taskId: z.string().min(1) }),
   z.object({ action: z.literal("add_note"), taskId: z.string().min(1), text: z.string().trim().min(1).max(5000) }),
@@ -48,7 +49,7 @@ function projectFromRow(project: Record<string, unknown>) {
   return { id: project.id, name: project.name, description: project.description };
 }
 function taskFromRow(task: Record<string, unknown>) {
-  return { id: task.id, title: task.title, projectId: task.project_id, description: task.description, due: task.due, priority: task.priority, status: taskStatusFromRow(task.status), progress: task.progress, assigneeId: task.assignee_id, createdById: task.created_by_id, parentId: task.parent_id, createdAt: task.created_at, assignedAt: task.assigned_at, dueDate: task.due_date, startDate: task.start_date, completedAt: task.completed_at, archivedAt: task.archived_at, reviewEnabled: "review_state" in task, reviewState: task.review_state ?? "none", reviewNote: task.review_note ?? "", reviewedBy: task.reviewed_by, reviewedAt: task.reviewed_at };
+  return { id: task.id, title: task.title, projectId: task.project_id, description: task.description, due: task.due, priority: task.priority, status: taskStatusFromRow(task.status), progress: task.progress, assigneeId: task.assignee_id, createdById: task.created_by_id, parentId: task.parent_id, blockedById: task.blocked_by_id, milestone: task.milestone ?? false, milestoneDate: task.milestone_date, recurrence: task.recurrence ?? "none", createdAt: task.created_at, assignedAt: task.assigned_at, dueDate: task.due_date, startDate: task.start_date, completedAt: task.completed_at, archivedAt: task.archived_at, reviewEnabled: "review_state" in task, reviewState: task.review_state ?? "none", reviewNote: task.review_note ?? "", reviewedBy: task.reviewed_by, reviewedAt: task.reviewed_at };
 }
 function noteFromRow(note: Record<string, unknown>) {
   return { id: note.id, taskId: note.task_id, text: note.text, authorId: note.author_id, createdAt: note.created_at, readBy: note.read_by ?? [] };
@@ -223,9 +224,14 @@ export async function POST(request: Request) {
         if (!parent || parent.archived_at || parent.project_id !== input.projectId) return fail("Invalid parent task.", 403);
         if (context.profile.role === "Senior Employee" && (parent.assignee_id !== context.user.id || assignee.role !== "Employee")) return fail("You may delegate only your assigned tasks to employees.", 403);
       } else if (context.profile.role === "Senior Employee") return fail("Senior employees must select an assigned parent task.", 403);
+      if (input.blockedById) {
+        const { data: blocker } = await context.client.from("tasks").select("id, project_id, archived_at").eq("id", input.blockedById).single();
+        if (!blocker || blocker.archived_at || blocker.project_id !== input.projectId) return fail("Choose an active dependency in the same project.");
+      }
       if (input.dueDate < input.startDate) return fail("Due date must be on or after the start date.");
       const taskClient = context.profile.role === "Admin" ? createSupabaseAdminClient() : context.client;
-      const { error } = await taskClient.from("tasks").insert({ id: `task-${crypto.randomUUID()}`, title: input.title, description: input.description || "No description yet.", project_id: input.projectId, assignee_id: input.assigneeId, created_by_id: context.user.id, parent_id: input.parentId || null, priority: input.priority, due: input.dueDate, due_date: input.dueDate, start_date: input.startDate, status: "Not started", progress: 0 });
+      const planningFields = input.blockedById || input.milestone || input.recurrence !== "none" ? { blocked_by_id: input.blockedById || null, milestone: input.milestone, milestone_date: input.milestone ? input.milestoneDate || input.dueDate : null, recurrence: input.recurrence } : {};
+      const { error } = await taskClient.from("tasks").insert({ id: `task-${crypto.randomUUID()}`, title: input.title, description: input.description || "No description yet.", project_id: input.projectId, assignee_id: input.assigneeId, created_by_id: context.user.id, parent_id: input.parentId || null, ...planningFields, priority: input.priority, due: input.dueDate, due_date: input.dueDate, start_date: input.startDate, status: "Not started", progress: 0 });
       if (error) return fail(error.message);
       return NextResponse.json({ ok: true });
     }
@@ -266,7 +272,13 @@ export async function POST(request: Request) {
       const { data: task } = await context.client.from("tasks").select("*").eq("id", input.taskId).single();
       if (!task || task.archived_at) return fail("Active task not found.", 404);
       if (task.review_state === "pending" || isCompletedStatus(task.status)) return fail("Request changes before editing submitted work, or create a follow-up task for completed work.");
-      const { data, error } = await context.client.from("tasks").update({ title: input.title, description: input.description, assignee_id: input.assigneeId, priority: input.priority, start_date: input.startDate, due_date: input.dueDate, due: input.dueDate, ...(task.assignee_id !== input.assigneeId ? { assigned_at: new Date().toISOString() } : {}) }).eq("id", input.taskId).is("archived_at", null).select("id").single();
+      if (input.blockedById === input.taskId) return fail("A task cannot depend on itself.");
+      if (input.blockedById) {
+        const { data: blocker } = await context.client.from("tasks").select("id, project_id, archived_at").eq("id", input.blockedById).single();
+        if (!blocker || blocker.archived_at || blocker.project_id !== task.project_id) return fail("Choose an active dependency in the same project.");
+      }
+      const planningFields = "blocked_by_id" in task || input.blockedById || input.milestone || input.recurrence !== "none" ? { blocked_by_id: input.blockedById || null, milestone: input.milestone, milestone_date: input.milestone ? input.milestoneDate || input.dueDate : null, recurrence: input.recurrence } : {};
+      const { data, error } = await context.client.from("tasks").update({ title: input.title, description: input.description, assignee_id: input.assigneeId, ...planningFields, priority: input.priority, start_date: input.startDate, due_date: input.dueDate, due: input.dueDate, ...(task.assignee_id !== input.assigneeId ? { assigned_at: new Date().toISOString() } : {}) }).eq("id", input.taskId).is("archived_at", null).select("id").single();
       if (error || !data) return fail(error?.message ?? "Unable to edit task.");
       return NextResponse.json({ ok: true });
     }
