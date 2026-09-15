@@ -926,7 +926,8 @@ export default function Home() {
     sortTasksNewestFirst(archivedTasks.filter((child) => child.parentId === task.id))
       .forEach((child) => appendArchivedTaskRows(child, depth + 1));
   };
-  sortTasksNewestFirst(archivedTasks.filter((task) => !task.parentId))
+  const archivedTaskIds = new Set(archivedTasks.map(task => task.id));
+  sortTasksNewestFirst(archivedTasks.filter((task) => !task.parentId || !archivedTaskIds.has(task.parentId)))
     .forEach((task) => appendArchivedTaskRows(task, 0));
   const archiveSearch = archiveFilters.search.trim().toLowerCase();
   const filteredArchivedProjects = archivedProjects.filter(project => (!archiveSearch || `${project.name} ${project.description}`.toLowerCase().includes(archiveSearch)) && (!archiveFilters.project || project.id === archiveFilters.project) && (!archiveFilters.type || archiveFilters.type === "project"));
