@@ -1197,7 +1197,7 @@ export default function Home() {
         <section className="min-w-0 flex-1 overflow-x-hidden p-4 sm:p-6 md:p-8">
           <div className="mx-auto w-full max-w-7xl">
             {notice && (
-              <button onClick={() => setNotice("")} className="mb-6 w-full rounded-lg bg-emerald-50 px-4 py-3 text-left text-sm text-emerald-800">{notice} <span className="float-right">×</span></button>
+              <button onClick={() => setNotice("")} className="fixed right-4 top-4 z-[60] max-w-md rounded-xl border border-indigo-100 bg-white px-4 py-3 text-left text-sm font-medium text-slate-700 shadow-xl">{notice} <span className="ml-4 text-slate-400">×</span></button>
             )}
             {(selectedSection === "my-work" || selectedSection === "workload") && <WorkOverview tasks={visibleTasks} userId={currentUser.id} users={workloadUsers} workload={selectedSection === "workload"} onOpen={openTaskFromOverview} onChat={toggleMessages} unread={id=>notes.filter(note=>note.taskId===id&&isNewMessage(note)).length} />}
             {selectedSection === "activity" && <ActivityHistory key={currentUser.id} />}
