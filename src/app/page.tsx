@@ -737,6 +737,28 @@ export default function Home() {
     }
   };
 
+  const restoreTask = async (task: Task) => {
+    if (currentUser?.role !== "Admin") return;
+    try {
+      await apiRequest("restore_task", { taskId: task.id });
+      await loadWorkspace();
+      setNotice("Task hierarchy restored to the active board.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Unable to restore task.");
+    }
+  };
+
+  const restoreProject = async (project: Project) => {
+    if (currentUser?.role !== "Admin") return;
+    try {
+      await apiRequest("restore_project", { projectId: project.id });
+      await loadWorkspace();
+      setNotice("Project and its work restored to the dashboard.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Unable to restore project.");
+    }
+  };
+
   const reviewTask = async (taskId: string, decision: "submit" | "approve" | "request_changes") => {
     if (reviewBusy) return;
     setReviewBusy(taskId);
@@ -911,7 +933,7 @@ export default function Home() {
               <p className="mt-1 text-xs font-medium text-amber-700">{task.parentId ? "Archived subtask" : "Archived task"} · {getProjectName(task.projectId)}</p>
               <p className="mt-2 text-sm text-slate-600">{task.description}</p>
             </div>
-            <div className="flex items-center gap-2"><span className="shrink-0 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700">Archived</span>{currentUser?.role === "Admin" && <button onClick={() => deleteTask(task)} className="rounded-lg bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">Remove permanently</button>}</div>
+            <div className="flex flex-wrap items-center gap-2"><span className="shrink-0 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700">Archived</span>{currentUser?.role === "Admin" && <><button onClick={() => restoreTask(task)} className="rounded-lg bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700">Unarchive</button><button onClick={() => deleteTask(task)} className="rounded-lg bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">Remove permanently</button></>}</div>
           </div>
           <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
             <span>Assigned to: <strong className="font-semibold text-slate-700">{getUserName(task.assigneeId)}</strong></span>
@@ -1310,7 +1332,7 @@ export default function Home() {
               <div className="mt-5 space-y-6">
                 {boardProjects.map((project) => (
                   <div key={project.id} className="space-y-3">
-                    <div className="flex flex-wrap items-baseline justify-between gap-2 px-1"><h4 className="font-bold text-indigo-950">{project.name}</h4><span className="text-xs text-slate-500">{boardTasks.filter((task) => task.projectId === project.id).length} tasks / subtasks</span></div>
+                    <div className="flex flex-wrap items-center justify-between gap-2 px-1"><h4 className="font-bold text-indigo-950">{project.name}</h4><div className="flex items-center gap-3"><span className="text-xs text-slate-500">{boardTasks.filter((task) => task.projectId === project.id).length} tasks / subtasks</span>{currentUser.role === "Admin" && <button onClick={() => archiveProject(project)} className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">Archive project</button>}</div></div>
                     {sortTasksNewestFirst(rootTasks.filter((task) => task.projectId === project.id), true).map((task) => renderTask(task))}
                     {!boardTasks.some((task) => task.projectId === project.id) && <p className="rounded-xl border border-dashed border-slate-200 p-5 text-sm text-slate-500">No tasks in this project yet.</p>}
                   </div>
@@ -1334,7 +1356,7 @@ export default function Home() {
                   {archiveCollapsed ? "Maximize" : "Minimize"}
                 </button>
               </div>
-              {!archiveCollapsed && archivedProjects.length > 0 && <div className="mt-5 grid gap-3 sm:grid-cols-2">{archivedProjects.map(project => <article key={project.id} className="rounded-xl border border-amber-200 bg-amber-50/50 p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold">{project.name}</p><p className="mt-1 text-xs text-amber-700">Archived project</p><p className="mt-2 text-sm text-slate-600">{project.description}</p></div>{currentUser.role === "Admin" && <button onClick={() => deleteProject(project)} className="rounded-lg bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">Remove permanently</button>}</div></article>)}</div>}
+              {!archiveCollapsed && archivedProjects.length > 0 && <div className="mt-5 grid gap-3 sm:grid-cols-2">{archivedProjects.map(project => <article key={project.id} className="rounded-xl border border-amber-200 bg-amber-50/50 p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold">{project.name}</p><p className="mt-1 text-xs text-amber-700">Archived project</p><p className="mt-2 text-sm text-slate-600">{project.description}</p></div>{currentUser.role === "Admin" && <div className="flex flex-col gap-2"><button onClick={() => restoreProject(project)} className="rounded-lg bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700">Unarchive</button><button onClick={() => deleteProject(project)} className="rounded-lg bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">Remove permanently</button></div>}</div></article>)}</div>}
               {!archiveCollapsed && (archivedTasks.length > 0 ? (
                 <>
                   <div className="mt-5 space-y-3">
