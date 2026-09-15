@@ -171,6 +171,7 @@ export default function Home() {
 
   const [noteTaskId, setNoteTaskId] = useState<string | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [chatProjectId, setChatProjectId] = useState("");
   const [sendingMessage, setSendingMessage] = useState(false);
   const [chatError, setChatError] = useState("");
@@ -432,6 +433,7 @@ export default function Home() {
   };
 
   const navigateTo = (item: string) => {
+    setMobileMenuOpen(false);
     if (item === "Chats") { setChatOpen(true); return; }
     setActiveSection(sectionTarget(item));
     window.scrollTo({ top: 0, behavior: "instant" });
@@ -1191,34 +1193,12 @@ export default function Home() {
           <ThemeToggle />
         </aside>
 
-        <div className="border-b border-slate-200/80 bg-white/95 p-4 shadow-sm backdrop-blur xl:hidden">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="flex items-center gap-2.5">
-                <img src="/mellivo-logo.png" alt="Mellivo logo" className="h-9 w-9 rounded-xl border border-slate-200 bg-white object-contain p-1 shadow-sm" />
-                <div>
-                  <h1 className="text-sm font-bold tracking-[0.16em] text-slate-950">MELLIVO</h1>
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-600">Task Management</p>
-                </div>
-              </div>
-              <button type="button" onClick={() => navigateTo("My profile")} className="mt-1 flex items-center gap-2 text-sm text-slate-500 hover:text-indigo-700"><span>{currentUser.name} · {currentUser.role}</span><span aria-hidden="true">⚙</span></button>
-            </div>
-            <button
-              onClick={async () => { await supabase?.auth.signOut(); setCurrentUserId(null); }}
-              className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 hover:border-indigo-200 hover:text-indigo-700"
-            >
-              Sign out
-            </button>
-          </div>
-          <nav className="mt-4 flex flex-wrap gap-2">
-            {navigationItems.map((item) => (
-              <a key={item} href={`#${sectionTarget(item)}`} onClick={(event) => { event.preventDefault(); navigateTo(item); }} aria-current={(item === "Chats" ? chatOpen : selectedSection === sectionTarget(item)) ? "page" : undefined} className={`rounded-xl border px-3 py-2 text-xs font-semibold transition-colors ${(item === "Chats" ? chatOpen : selectedSection === sectionTarget(item)) ? "border-indigo-600 bg-indigo-600 text-white shadow-sm" : "border-slate-200 bg-slate-50 text-slate-700 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"}`}>
-                {item}{item === "Notifications" && notifications.length > 0 ? ` (${notifications.length})` : ""}
-              </a>
-            ))}
-          </nav>
-          <ThemeToggle />
-        </div>
+        <header className="sticky top-0 z-30 flex items-center justify-between border-b border-slate-200/80 bg-white/95 px-4 py-3 shadow-sm backdrop-blur xl:hidden">
+          <div className="flex min-w-0 items-center gap-2.5"><img src="/mellivo-logo.png" alt="Mellivo logo" className="h-9 w-9 rounded-xl border border-slate-200 bg-white object-contain p-1 shadow-sm" /><div className="min-w-0"><h1 className="text-sm font-bold tracking-[0.16em] text-slate-950">MELLIVO</h1><p className="truncate text-[10px] font-semibold uppercase tracking-wider text-indigo-600">{selectedSection === "tasks" ? (isWorker(currentUser.role) ? "My daily updates" : "Team tasks") : selectedSection.replaceAll("-", " ")}</p></div></div>
+          <button type="button" aria-label="Open navigation" aria-expanded={mobileMenuOpen} onClick={() => setMobileMenuOpen(true)} className="grid h-10 w-10 place-items-center rounded-xl border border-slate-200 bg-slate-50 text-xl font-bold">☰</button>
+        </header>
+
+        {mobileMenuOpen && <div className="fixed inset-0 z-50 bg-slate-950/55 backdrop-blur-sm xl:hidden" onMouseDown={(event) => { if (event.target === event.currentTarget) setMobileMenuOpen(false); }}><aside role="dialog" aria-modal="true" aria-label="Navigation" className="flex h-full w-[min(84vw,320px)] flex-col overflow-y-auto border-r border-slate-200 bg-white p-4 shadow-2xl"><div className="flex items-center justify-between"><div className="flex items-center gap-3"><img src="/mellivo-logo.png" alt="Mellivo logo" className="h-10 w-10 rounded-xl border border-slate-200 bg-white object-contain p-1" /><div><p className="font-bold tracking-[0.16em]">MELLIVO</p><p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-600">Task Management</p></div></div><button aria-label="Close navigation" onClick={() => setMobileMenuOpen(false)} className="grid h-9 w-9 place-items-center rounded-full bg-slate-100 text-xl">×</button></div><button type="button" onClick={() => navigateTo("My profile")} className="mt-5 flex items-center justify-between rounded-xl border border-indigo-100 bg-indigo-50 p-3 text-left"><span><span className="block font-semibold">{currentUser.name}</span><span className="text-sm text-slate-500">{currentUser.role}</span></span><span aria-hidden="true">⚙</span></button><nav className="mt-5 space-y-1">{navigationItems.map(item => <a key={item} href={`#${sectionTarget(item)}`} onClick={(event) => { event.preventDefault(); navigateTo(item); }} aria-current={(item === "Chats" ? chatOpen : selectedSection === sectionTarget(item)) ? "page" : undefined} className={`block rounded-xl px-3 py-3 text-sm font-semibold ${(item === "Chats" ? chatOpen : selectedSection === sectionTarget(item)) ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-indigo-50"}`}>{item}{item === "Notifications" && notifications.length > 0 ? ` (${notifications.length})` : ""}</a>)}</nav><div className="mt-auto space-y-3 pt-5"><ThemeToggle /><button onClick={async () => { await supabase?.auth.signOut(); setCurrentUserId(null); }} className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-semibold text-slate-600">Sign out</button></div></aside></div>}
 
         <section className="min-w-0 flex-1 overflow-x-hidden p-4 sm:p-6 md:p-8">
           <div className="mx-auto w-full max-w-7xl">
@@ -1510,7 +1490,7 @@ export default function Home() {
       {selectedTaskId && visibleTasks.some((task) => task.id === selectedTaskId) && <TaskDetailsPanel onClose={() => setSelectedTaskId(null)}>{notice && <p role="status" className="mb-4 rounded-lg bg-indigo-50 p-3 text-sm text-indigo-700">{notice}</p>}{renderTask(visibleTasks.find((task) => task.id === selectedTaskId)!, 0, true)}<TaskAttachments key={`files-${selectedTaskId}`} taskId={selectedTaskId} canUpload={Boolean(visibleTasks.find(task=>task.id===selectedTaskId && !task.archivedAt && (["Admin","Manager"].includes(currentUser.role)||task.assigneeId===currentUser.id||(currentUser.role==="Senior Employee"&&task.createdById===currentUser.id))))} /><ActivityHistory key={`activity-${selectedTaskId}`} taskId={selectedTaskId} /></TaskDetailsPanel>}
 
       {chatOpen && (
-        <aside role="dialog" aria-label="Task chats" className="fixed bottom-3 right-3 z-30 flex h-[min(640px,85dvh)] w-[calc(100vw-24px)] flex-col overflow-hidden rounded-2xl border border-indigo-100 bg-white shadow-2xl sm:bottom-5 sm:right-5 sm:w-[400px]">
+        <aside role="dialog" aria-modal="true" aria-label="Task chats" className="fixed inset-0 z-40 flex h-[100dvh] w-full flex-col overflow-hidden bg-white shadow-2xl sm:inset-auto sm:bottom-5 sm:right-5 sm:h-[min(640px,85dvh)] sm:w-[min(420px,calc(100vw-40px))] sm:rounded-2xl sm:border sm:border-indigo-100">
           <div className="flex items-center justify-between bg-indigo-600 px-4 py-3 text-white"><div><h2 className="font-bold">Task chats</h2><p className="text-xs text-indigo-100">Keep the conversation with the work</p></div><button aria-label="Close chat" onClick={() => setChatOpen(false)} className="rounded-lg px-3 py-1 text-xl hover:bg-indigo-500">×</button></div>
           <div className="grid gap-2 border-b border-slate-100 p-3">
             <label className="text-xs font-semibold text-slate-500">Project<select disabled={sendingMessage} value={chatProjectId} onChange={(event) => { setChatProjectId(event.target.value); setNoteTaskId(null); setNoteText(""); setChatError(""); }} className="mt-1 w-full rounded-lg border border-slate-200 p-2 text-sm text-slate-800"><option value="">All projects</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
@@ -1526,9 +1506,9 @@ export default function Home() {
               </div>
             ))}<div ref={chatEndRef} />
           </div>
-          {chatTask && <div className="max-h-52 overflow-y-auto px-3"><TaskAttachments key={chatTask.id} taskId={chatTask.id} canUpload={canSendChat} /></div>}
+          {chatTask && <div className="max-h-40 shrink-0 overflow-y-auto border-t border-slate-100 px-3 sm:max-h-52"><TaskAttachments key={chatTask.id} taskId={chatTask.id} canUpload={canSendChat} /></div>}
           {chatError && <p role="alert" className="px-3 pt-2 text-xs text-red-600">{chatError}</p>}
-          <form onSubmit={(event) => { event.preventDefault(); if (chatTask) void addNote(chatTask.id); }} className="flex items-end gap-2 border-t border-slate-100 p-3">
+          <form onSubmit={(event) => { event.preventDefault(); if (chatTask) void addNote(chatTask.id); }} className="flex shrink-0 items-end gap-2 border-t border-slate-100 bg-white p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
             <textarea aria-label="Message" disabled={!canSendChat || sendingMessage} maxLength={5000} rows={2} value={noteText} onChange={(event) => setNoteText(event.target.value)} placeholder={chatTask && !canSendChat ? "Read-only conversation" : "Write a message…"} className="min-w-0 flex-1 resize-none rounded-xl border border-slate-200 p-2 text-sm disabled:bg-slate-50" />
             <button disabled={!canSendChat || sendingMessage || !noteText.trim()} className="rounded-xl bg-indigo-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-40">{sendingMessage ? "Sending…" : "Send"}</button>
           </form>
