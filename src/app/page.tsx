@@ -17,6 +17,7 @@ import { isSupabaseConfigured, supabase } from "@/lib/supabase/browser";
 type Role = "Admin" | "Manager" | "Senior Employee" | "Employee";
 type TaskStatus = "Not started" | "In progress" | "Completed";
 type Modal = "user" | "project" | "task" | null;
+type ConfirmRequest = { title: string; message: string; confirmLabel: string; tone?: "danger" | "warning"; action: () => Promise<void> };
 
 type User = {
   id: string;
@@ -77,7 +78,6 @@ type ProgressLog = {
 };
 
 const isWorker = (role?: Role) => role === "Senior Employee" || role === "Employee";
-const ARCHIVE_PAGE_SIZE = 10;
 const localDateInput = () => {
   const date = new Date();
   return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, "0"), String(date.getDate()).padStart(2, "0")].join("-");
@@ -116,6 +116,8 @@ export default function Home() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [archivedTasks, setArchivedTasks] = useState<Task[]>([]);
   const [archivePage, setArchivePage] = useState(1);
+  const [archivePageSize, setArchivePageSize] = useState(10);
+  const [archiveFilters, setArchiveFilters] = useState({ search: "", project: "", type: "", assignee: "" });
   const [archiveCollapsed, setArchiveCollapsed] = useState(false);
   const [notes, setNotes] = useState<Note[]>([]);
   const [progressLogs, setProgressLogs] = useState<ProgressLog[]>([]);
@@ -128,6 +130,8 @@ export default function Home() {
   const [activeSection, setActiveSection] = useState("dashboard");
   const [modal, setModal] = useState<Modal>(null);
   const [notice, setNotice] = useState("");
+  const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
 
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
@@ -685,56 +689,27 @@ export default function Home() {
     }
     const descendants = getTaskDescendants(task.id);
     const detail = descendants.length ? ` and ${descendants.length} descendant subtask${descendants.length === 1 ? "" : "s"}` : "";
-    if (!window.confirm(`Archive “${task.title}”${detail}?`)) return;
-    try {
-      await apiRequest("archive_task", { taskId: task.id });
-      await loadWorkspace();
-      setNotice("Task moved to Archive.");
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Unable to archive task.");
-    }
+    setConfirmRequest({ title: "Archive task?", message: `“${task.title}”${detail} will move out of active work. You can restore it later.`, confirmLabel: "Archive", tone: "warning", action: async () => { await apiRequest("archive_task", { taskId: task.id }); await loadWorkspace(); setNotice("Task moved to Archive."); } });
   };
 
   const deleteTask = async (task: Task) => {
     if (currentUser?.role !== "Admin") return;
     const descendants = getTaskDescendants(task.id);
     const detail = descendants.length ? ` and ${descendants.length} subtask${descendants.length === 1 ? "" : "s"}` : "";
-    if (!window.confirm(`Permanently remove “${task.title}”${detail}? Messages, updates, attachments, and history linked to this work will also be removed.`)) return;
-    try {
-      await apiRequest("delete_task", { taskId: task.id });
-      setSelectedTaskId(null);
-      await loadWorkspace();
-      setNotice("Task and linked records removed.");
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Unable to remove task.");
-    }
+    setConfirmRequest({ title: "Remove permanently?", message: `“${task.title}”${detail}, including linked messages, updates, attachments, and history, will be permanently removed.`, confirmLabel: "Remove permanently", tone: "danger", action: async () => { await apiRequest("delete_task", { taskId: task.id }); setSelectedTaskId(null); await loadWorkspace(); setNotice("Task and linked records removed."); } });
   };
 
   const deleteProject = async (project: Project) => {
     if (currentUser?.role !== "Admin") return;
     const projectTaskCount = tasks.filter(task => task.projectId === project.id).length;
     const detail = projectTaskCount ? ` It contains ${projectTaskCount} task${projectTaskCount === 1 ? "" : "s"}, which will also be permanently removed.` : "";
-    if (!window.confirm(`Permanently remove project “${project.name}”?${detail}`)) return;
-    try {
-      await apiRequest("delete_project", { projectId: project.id });
-      await loadWorkspace();
-      setNotice("Project and linked work removed.");
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Unable to remove project.");
-    }
+    setConfirmRequest({ title: "Remove project permanently?", message: `“${project.name}” will be permanently removed.${detail}`, confirmLabel: "Remove permanently", tone: "danger", action: async () => { await apiRequest("delete_project", { projectId: project.id }); await loadWorkspace(); setNotice("Project and linked work removed."); } });
   };
 
   const archiveProject = async (project: Project) => {
     if (currentUser?.role !== "Admin") return;
     const count = tasks.filter(task => task.projectId === project.id).length;
-    if (!window.confirm(`Archive project “${project.name}” and its ${count} active task${count === 1 ? "" : "s"}?`)) return;
-    try {
-      await apiRequest("archive_project", { projectId: project.id });
-      await loadWorkspace();
-      setNotice("Project and its work moved to Archive.");
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Unable to archive project.");
-    }
+    setConfirmRequest({ title: "Archive project?", message: `“${project.name}” and its ${count} active task${count === 1 ? "" : "s"} will move to Archive. You can restore them later.`, confirmLabel: "Archive project", tone: "warning", action: async () => { await apiRequest("archive_project", { projectId: project.id }); await loadWorkspace(); setNotice("Project and its work moved to Archive."); } });
   };
 
   const restoreTask = async (task: Task) => {
@@ -953,11 +928,14 @@ export default function Home() {
   };
   sortTasksNewestFirst(archivedTasks.filter((task) => !task.parentId))
     .forEach((task) => appendArchivedTaskRows(task, 0));
-  const archivePageCount = Math.max(1, Math.ceil(archivedTaskRows.length / ARCHIVE_PAGE_SIZE));
+  const archiveSearch = archiveFilters.search.trim().toLowerCase();
+  const filteredArchivedProjects = archivedProjects.filter(project => (!archiveSearch || `${project.name} ${project.description}`.toLowerCase().includes(archiveSearch)) && (!archiveFilters.project || project.id === archiveFilters.project) && (!archiveFilters.type || archiveFilters.type === "project"));
+  const filteredArchivedTaskRows = archivedTaskRows.filter(({ task }) => (!archiveSearch || `${task.title} ${task.description}`.toLowerCase().includes(archiveSearch)) && (!archiveFilters.project || task.projectId === archiveFilters.project) && (!archiveFilters.assignee || task.assigneeId === archiveFilters.assignee) && (!archiveFilters.type || archiveFilters.type === (task.parentId ? "subtask" : "task")));
+  const archivePageCount = Math.max(1, Math.ceil(filteredArchivedTaskRows.length / archivePageSize));
   const safeArchivePage = Math.min(archivePage, archivePageCount);
-  const archivePageRows = archivedTaskRows.slice(
-    (safeArchivePage - 1) * ARCHIVE_PAGE_SIZE,
-    safeArchivePage * ARCHIVE_PAGE_SIZE,
+  const archivePageRows = filteredArchivedTaskRows.slice(
+    (safeArchivePage - 1) * archivePageSize,
+    safeArchivePage * archivePageSize,
   );
 
   if (!hydrated) {
@@ -1146,7 +1124,7 @@ export default function Home() {
   ));
   const navigationItems = [
     "Dashboard",
-    "My Work",
+    ...(currentUser.role === "Admin" ? [] : ["My Work"]),
     isWorker(currentUser.role) ? "My daily updates" : "Team tasks",
     "Chats",
     "Notifications",
@@ -1267,6 +1245,8 @@ export default function Home() {
 
             <DashboardCharts tasks={visibleTasks} projects={projects} progressLogs={progressLogs} />
 
+            {currentUser.role === "Admin" && <div className="mt-6 rounded-xl border border-indigo-100 bg-white p-5 shadow-sm"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h3 className="font-bold">Admin tools</h3><p className="mt-1 text-sm text-slate-500">Manage access, inspect audit history, or review archived data.</p></div><div className="flex flex-wrap gap-2"><button onClick={() => navigateTo("User management")} className="rounded-lg bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-700">Manage users</button><button onClick={() => navigateTo("Activity")} className="rounded-lg bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-700">View audit log</button><button onClick={() => navigateTo("Archive")} className="rounded-lg bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">Open archive</button></div></div></div>}
+
             </div>
 
             <div id="profile" hidden={selectedSection !== "profile"} className="rounded-xl bg-white p-6 shadow-sm">
@@ -1356,14 +1336,15 @@ export default function Home() {
                   {archiveCollapsed ? "Maximize" : "Minimize"}
                 </button>
               </div>
-              {!archiveCollapsed && archivedProjects.length > 0 && <div className="mt-5 grid gap-3 sm:grid-cols-2">{archivedProjects.map(project => <article key={project.id} className="rounded-xl border border-amber-200 bg-amber-50/50 p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold">{project.name}</p><p className="mt-1 text-xs text-amber-700">Archived project</p><p className="mt-2 text-sm text-slate-600">{project.description}</p></div>{currentUser.role === "Admin" && <div className="flex flex-col gap-2"><button onClick={() => restoreProject(project)} className="rounded-lg bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700">Unarchive</button><button onClick={() => deleteProject(project)} className="rounded-lg bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">Remove permanently</button></div>}</div></article>)}</div>}
-              {!archiveCollapsed && (archivedTasks.length > 0 ? (
+              {!archiveCollapsed && <div className="mt-5 grid gap-3 rounded-xl bg-slate-50 p-4 sm:grid-cols-2 xl:grid-cols-5"><label className="text-xs font-semibold text-slate-600 xl:col-span-2">Search archive<input type="search" value={archiveFilters.search} onChange={event => { setArchiveFilters(current => ({ ...current, search: event.target.value })); setArchivePage(1); }} placeholder="Title or description" className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal" /></label><label className="text-xs font-semibold text-slate-600">Project<select value={archiveFilters.project} onChange={event => { setArchiveFilters(current => ({ ...current, project: event.target.value })); setArchivePage(1); }} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal"><option value="">All projects</option>{[...projects, ...archivedProjects].map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label><label className="text-xs font-semibold text-slate-600">Type<select value={archiveFilters.type} onChange={event => { setArchiveFilters(current => ({ ...current, type: event.target.value })); setArchivePage(1); }} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal"><option value="">All types</option><option value="project">Projects</option><option value="task">Tasks</option><option value="subtask">Subtasks</option></select></label><label className="text-xs font-semibold text-slate-600">Assignee<select value={archiveFilters.assignee} onChange={event => { setArchiveFilters(current => ({ ...current, assignee: event.target.value })); setArchivePage(1); }} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal"><option value="">All assignees</option>{users.filter(user => archivedTasks.some(task => task.assigneeId === user.id)).map(user => <option key={user.id} value={user.id}>{user.name}</option>)}</select></label></div>}
+              {!archiveCollapsed && filteredArchivedProjects.length > 0 && <div className="mt-5 grid gap-3 sm:grid-cols-2">{filteredArchivedProjects.map(project => <article key={project.id} className="rounded-xl border border-amber-200 bg-amber-50/50 p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold">{project.name}</p><p className="mt-1 text-xs text-amber-700">Archived project</p><p className="mt-2 text-sm text-slate-600">{project.description}</p></div>{currentUser.role === "Admin" && <div className="flex flex-col gap-2"><button onClick={() => restoreProject(project)} className="rounded-lg bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700">Unarchive</button><button onClick={() => deleteProject(project)} className="rounded-lg bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">Remove permanently</button></div>}</div></article>)}</div>}
+              {!archiveCollapsed && (filteredArchivedTaskRows.length > 0 ? (
                 <>
                   <div className="mt-5 space-y-3">
                     {archivePageRows.map(({ task, depth }) => renderArchivedTask(task, depth))}
                   </div>
                   <div className="mt-5 flex flex-col gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:items-center sm:justify-between">
-                    <p className="text-xs font-medium text-slate-500">Page {safeArchivePage} of {archivePageCount} · showing up to {ARCHIVE_PAGE_SIZE} tasks/subtasks</p>
+                    <div className="flex items-center gap-2"><p className="text-xs font-medium text-slate-500">Page {safeArchivePage} of {archivePageCount}</p><label className="text-xs text-slate-500">Rows <select value={archivePageSize} onChange={event => { setArchivePageSize(Number(event.target.value)); setArchivePage(1); }} className="rounded border border-slate-200 bg-white px-2 py-1"><option value="10">10</option><option value="25">25</option><option value="50">50</option></select></label></div>
                     <div className="flex gap-2">
                       <button
                         type="button"
@@ -1385,7 +1366,7 @@ export default function Home() {
                   </div>
                 </>
               ) : (
-                !archivedProjects.length && <p className="mt-5 rounded-lg border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">No archived projects, tasks, or subtasks yet.</p>
+                !filteredArchivedProjects.length && <p className="mt-5 rounded-lg border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">No archived items match these filters.</p>
               ))}
             </div>
 
@@ -1527,6 +1508,8 @@ export default function Home() {
           </form>
         </aside>
       )}
+
+      {confirmRequest && <div role="dialog" aria-modal="true" aria-labelledby="confirm-title" className="fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-4 backdrop-blur-sm"><div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"><div className={`mb-4 grid h-11 w-11 place-items-center rounded-full text-xl ${confirmRequest.tone === "danger" ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-700"}`} aria-hidden="true">{confirmRequest.tone === "danger" ? "!" : "↗"}</div><h2 id="confirm-title" className="text-xl font-bold">{confirmRequest.title}</h2><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-600">{confirmRequest.message}</p><div className="mt-6 flex justify-end gap-3"><button disabled={confirmBusy} onClick={() => setConfirmRequest(null)} className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50">Cancel</button><button autoFocus disabled={confirmBusy} onClick={async () => { setConfirmBusy(true); try { await confirmRequest.action(); setConfirmRequest(null); } catch (error) { setNotice(error instanceof Error ? error.message : "The action could not be completed."); setConfirmRequest(null); } finally { setConfirmBusy(false); } }} className={`rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50 ${confirmRequest.tone === "danger" ? "bg-red-600 hover:bg-red-700" : "bg-amber-600 hover:bg-amber-700"}`}>{confirmBusy ? "Working…" : confirmRequest.confirmLabel}</button></div></div></div>}
 
       {modal === "user" && currentUser.role === "Admin" && (
         <div className="fixed inset-0 z-20 flex items-center justify-center bg-slate-900/40 p-4"><div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl"><div className="flex items-center justify-between"><div><h2 className="text-xl font-bold">Invite new user</h2><p className="mt-1 text-sm text-slate-500">Send an email invitation so the user can choose a password.</p></div><button onClick={() => setModal(null)} className="text-xl text-slate-400">×</button></div><form onSubmit={createUser} className="mt-6 space-y-4"><input value={newUserName} onChange={(event) => setNewUserName(event.target.value)} placeholder="Full name" className="w-full rounded-lg border px-4 py-3" /><input value={newUserEmail} onChange={(event) => setNewUserEmail(event.target.value)} type="email" placeholder="Email address" className="w-full rounded-lg border px-4 py-3" /><select value={newUserRole} onChange={(event) => setNewUserRole(event.target.value as Role)} className="w-full rounded-lg border px-4 py-3"><option>Admin</option><option>Manager</option><option>Senior Employee</option><option>Employee</option></select><button disabled={invitingUser} className="w-full rounded-lg bg-indigo-600 px-4 py-3 font-semibold text-white disabled:opacity-50">{invitingUser ? "Sending…" : "Send invitation"}</button></form></div></div>
