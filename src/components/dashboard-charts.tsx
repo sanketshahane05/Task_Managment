@@ -57,8 +57,8 @@ export default function DashboardCharts({ tasks, projects, progressLogs }: { tas
       <div className="mt-4">
         <svg viewBox="0 0 100 70" className="h-36 w-full" role="img" aria-label={`Daily updates: ${activity.map(day => `${day.label} ${day.count}`).join(", ")}`}>
           <path d="M8 62 H92" stroke="#cbd5e1" strokeWidth="1" />
-          <polyline points={points} fill="none" stroke="#9a854a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-          {activity.map((day, index) => <g key={day.label}><circle cx={8 + index * 14} cy={62 - day.count / maxActivity * 48} r="2.5" fill="#9a854a" /><text x={8 + index * 14} y="69" textAnchor="middle" fontSize="4" fill="currentColor">{day.label.slice(0, 1)}</text>{day.count > 0 && <text x={8 + index * 14} y={57 - day.count / maxActivity * 48} textAnchor="middle" fontSize="4" fill="currentColor">{day.count}</text>}</g>)}
+          <polyline points={points} fill="none" stroke="#e79a3f" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+          {activity.map((day, index) => <g key={day.label}><circle cx={8 + index * 14} cy={62 - day.count / maxActivity * 48} r="2.5" fill="#e79a3f" /><text x={8 + index * 14} y="69" textAnchor="middle" fontSize="4" fill="currentColor">{day.label.slice(0, 1)}</text>{day.count > 0 && <text x={8 + index * 14} y={57 - day.count / maxActivity * 48} textAnchor="middle" fontSize="4" fill="currentColor">{day.count}</text>}</g>)}
         </svg>
       </div>
     </article>
