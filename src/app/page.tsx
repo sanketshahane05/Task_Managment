@@ -112,6 +112,7 @@ const parseReportDateInput = (value: string, endOfDay = false) => {
 export default function Home() {
   const [users, setUsers] = useState<User[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [archivedProjects, setArchivedProjects] = useState<Project[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [archivedTasks, setArchivedTasks] = useState<Task[]>([]);
   const [archivePage, setArchivePage] = useState(1);
@@ -198,6 +199,7 @@ export default function Home() {
     if (!response.ok) throw new Error(data.error ?? "Unable to load workspace.");
     setUsers(data.users ?? []);
     setProjects(data.projects ?? []);
+    setArchivedProjects(data.archivedProjects ?? []);
     setTasks(data.tasks ?? []);
     setArchivedTasks(data.archivedTasks ?? []);
     setNotes(data.notes ?? []);
@@ -311,7 +313,7 @@ export default function Home() {
   const getUserName = (id: string) =>
     users.find((user) => user.id === id)?.name ?? "Unassigned";
   const getProjectName = (id: string) =>
-    projects.find((project) => project.id === id)?.name ?? "Unknown project";
+    [...projects, ...archivedProjects].find((project) => project.id === id)?.name ?? "Unknown project";
   const getProjectStatus = (projectId: string): TaskStatus => {
     const projectTasks = visibleTasks.filter((task) => task.projectId === projectId);
     if (projectTasks.length === 0) return "Not started";
@@ -673,17 +675,17 @@ export default function Home() {
   };
 
   const canArchiveTask = (task: Task) => {
-    if (currentUser?.role !== "Admin" && currentUser?.role !== "Manager") return false;
-    if (task.status !== "Completed") return false;
-    return getTaskDescendants(task.id).every((child) => child.status === "Completed");
+    return Boolean(currentUser && (["Admin", "Manager"].includes(currentUser.role) || task.createdById === currentUser.id));
   };
 
   const archiveTask = async (task: Task) => {
     if (!canArchiveTask(task)) {
-      setNotice("Complete all subtasks before archiving this task.");
+      setNotice("Only the creator, a manager, or an administrator can archive this task.");
       return;
     }
-    if (!window.confirm(`Archive ${task.title} and its completed subtasks?`)) return;
+    const descendants = getTaskDescendants(task.id);
+    const detail = descendants.length ? ` and ${descendants.length} descendant subtask${descendants.length === 1 ? "" : "s"}` : "";
+    if (!window.confirm(`Archive “${task.title}”${detail}?`)) return;
     try {
       await apiRequest("archive_task", { taskId: task.id });
       await loadWorkspace();
@@ -719,6 +721,19 @@ export default function Home() {
       setNotice("Project and linked work removed.");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Unable to remove project.");
+    }
+  };
+
+  const archiveProject = async (project: Project) => {
+    if (currentUser?.role !== "Admin") return;
+    const count = tasks.filter(task => task.projectId === project.id).length;
+    if (!window.confirm(`Archive project “${project.name}” and its ${count} active task${count === 1 ? "" : "s"}?`)) return;
+    try {
+      await apiRequest("archive_project", { projectId: project.id });
+      await loadWorkspace();
+      setNotice("Project and its work moved to Archive.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Unable to archive project.");
     }
   };
 
@@ -772,7 +787,7 @@ export default function Home() {
         <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex items-start justify-between gap-3">
             <button onClick={openDetails} className="min-w-0 flex-1 break-words text-left text-base font-bold leading-relaxed text-slate-900 hover:text-indigo-600">{task.title}</button>
-            {(canAddSubtask || canManage || canArchiveTask(task)) && <details className="relative shrink-0" onClick={(event) => { if ((event.target as HTMLElement).closest("button")) event.currentTarget.open = false; }}><summary aria-label={"Actions for " + task.title} className="cursor-pointer list-none rounded-lg px-3 py-1 text-lg font-bold text-slate-500 hover:bg-slate-100">⋯</summary><div className="absolute right-0 z-10 mt-1 w-44 rounded-xl border border-slate-200 bg-white p-1 shadow-lg">{canAddSubtask && <button onClick={() => openTaskForm(task)} className="block w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100">Add subtask</button>}{canManage && <button onClick={() => openEditTask(task)} className="block w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100">Edit / reassign</button>}{canArchiveTask(task) && <button onClick={() => archiveTask(task)} className="block w-full rounded-lg px-3 py-2 text-left text-sm text-amber-700 hover:bg-slate-100">Archive task</button>}{currentUser?.role === "Admin" && <button onClick={() => deleteTask(task)} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-semibold text-red-700 hover:bg-red-50">Remove permanently</button>}</div></details>}
+            {(canAddSubtask || canManage || canArchiveTask(task)) && <details className="relative shrink-0" onClick={(event) => { if ((event.target as HTMLElement).closest("button")) event.currentTarget.open = false; }}><summary aria-label={"Actions for " + task.title} className="cursor-pointer list-none rounded-lg px-3 py-1 text-lg font-bold text-slate-500 hover:bg-slate-100">⋯</summary><div className="absolute right-0 z-10 mt-1 w-44 rounded-xl border border-slate-200 bg-white p-1 shadow-lg">{canAddSubtask && <button onClick={() => openTaskForm(task)} className="block w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100">Add subtask</button>}{canManage && <button onClick={() => openEditTask(task)} className="block w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100">Edit / reassign</button>}{canArchiveTask(task) && <button onClick={() => archiveTask(task)} className="block w-full rounded-lg px-3 py-2 text-left text-sm text-amber-700 hover:bg-slate-100">Archive</button>}</div></details>}
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs"><span className="rounded-full bg-indigo-50 px-2 py-1 font-semibold text-indigo-700">{task.status}</span><span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">{task.priority}</span>{task.reviewState && task.reviewState !== "none" && <button onClick={openDetails} className="rounded-full bg-amber-50 px-2 py-1 font-semibold text-amber-700">{task.reviewState === "pending" ? "Awaiting review" : task.reviewState === "changes_requested" ? "Changes requested" : "Approved"}</button>}</div>
           <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-slate-500"><span>{getUserName(task.assigneeId)}</span><span>Due {task.dueDate ? formatDateOnly(task.dueDate) : task.due}</span><span className="flex items-center gap-2"><span className="h-1.5 w-20 overflow-hidden rounded-full bg-slate-100"><span className="block h-full rounded-full bg-indigo-600" style={{width: task.progress + "%"}} /></span><span className="font-semibold text-indigo-600">{task.progress}%</span></span></div>
@@ -827,7 +842,6 @@ export default function Home() {
             {(((["Admin", "Manager"].includes(currentUser?.role ?? "")) && !task.parentId) || (currentUser?.role === "Senior Employee" && task.assigneeId === currentUser.id)) && <button type="button" onClick={() => openTaskForm(task)} className="rounded-lg border border-indigo-200 px-3 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-50">+ Subtask</button>}
             {["Admin", "Manager"].includes(currentUser?.role ?? "") && <button type="button" onClick={() => openEditTask(task)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">Edit / reassign</button>}
             {canArchiveTask(task) && <button onClick={() => archiveTask(task)} className="rounded-lg bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">Archive task</button>}
-            {currentUser?.role === "Admin" && <button onClick={() => deleteTask(task)} className="rounded-lg bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">Remove permanently</button>}
             <details className="text-xs text-slate-500"><summary className="cursor-pointer font-medium">Timeline</summary><div className="mt-2 flex flex-wrap gap-3"><span>Assigned: {formatDateOnly(getAssignedAt(task))}</span><span>Created: {formatTimestamp(task.createdAt)}</span><span>Elapsed: {getTaskDaysFromAssignment(task)}</span><span>Completed: {formatTimestamp(task.completedAt)}</span></div></details>
           </div>
 
@@ -897,7 +911,7 @@ export default function Home() {
               <p className="mt-1 text-xs font-medium text-amber-700">{task.parentId ? "Archived subtask" : "Archived task"} · {getProjectName(task.projectId)}</p>
               <p className="mt-2 text-sm text-slate-600">{task.description}</p>
             </div>
-            <span className="shrink-0 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">Completed</span>
+            <div className="flex items-center gap-2"><span className="shrink-0 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700">Archived</span>{currentUser?.role === "Admin" && <button onClick={() => deleteTask(task)} className="rounded-lg bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">Remove permanently</button>}</div>
           </div>
           <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
             <span>Assigned to: <strong className="font-semibold text-slate-700">{getUserName(task.assigneeId)}</strong></span>
@@ -1271,7 +1285,7 @@ export default function Home() {
 
             <div id="projects" hidden={selectedSection !== "dashboard"} className="mt-6 rounded-xl bg-white p-6 shadow-sm">
               <div className="flex items-center justify-between"><div><h3 className="text-xl font-bold">Projects <span className="text-base font-medium text-slate-400">({projects.length})</span></h3><p className="mt-1 text-sm text-slate-500">{currentUser.role === "Admin" ? "Admin controls project creation." : "Projects connected to your tasks."}</p></div>{currentUser.role === "Admin" && <button onClick={() => setModal("project")} className="rounded-lg bg-slate-100 px-4 py-2 text-sm font-semibold text-indigo-600">+ Add project</button>}</div>
-              <div className="mt-5 grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">{projects.map((project) => { const projectTasks = tasks.filter((task) => task.projectId === project.id); const subtaskCount = projectTasks.filter((task) => task.parentId).length; const projectStatus = getProjectStatus(project.id); return <article key={project.id} className="relative rounded-lg border border-slate-200 p-4 transition hover:border-indigo-400"><button type="button" onClick={() => openProjectTasks(project.id)} aria-label={`Open tasks for ${project.name}`} className="block w-full text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500"><span className="flex items-start justify-between gap-3 pr-8"><span className="block break-words font-semibold">{project.name}</span><span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${projectStatusClass(projectStatus)}`}>{projectStatus}</span></span><span className="mt-2 block text-sm text-slate-500">{project.description}</span><span className="mt-3 block text-xs text-indigo-600">{projectTasks.length} tasks · {subtaskCount} subtasks</span></button>{currentUser.role === "Admin" && <button type="button" onClick={() => deleteProject(project)} aria-label={`Remove project ${project.name}`} className="absolute right-3 top-3 rounded-lg px-2 py-1 text-sm font-bold text-red-600 hover:bg-red-50">×</button>}</article>; })}</div>
+              <div className="mt-5 grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">{projects.map((project) => { const projectTasks = tasks.filter((task) => task.projectId === project.id); const subtaskCount = projectTasks.filter((task) => task.parentId).length; const projectStatus = getProjectStatus(project.id); return <article key={project.id} className="rounded-lg border border-slate-200 p-4 transition hover:border-indigo-400"><button type="button" onClick={() => openProjectTasks(project.id)} aria-label={`Open tasks for ${project.name}`} className="block w-full text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500"><span className="flex items-start justify-between gap-3"><span className="block break-words font-semibold">{project.name}</span><span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${projectStatusClass(projectStatus)}`}>{projectStatus}</span></span><span className="mt-2 block text-sm text-slate-500">{project.description}</span><span className="mt-3 block text-xs text-indigo-600">{projectTasks.length} tasks · {subtaskCount} subtasks</span></button>{currentUser.role === "Admin" && <button type="button" onClick={() => archiveProject(project)} className="mt-4 rounded-lg bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">Archive project</button>}</article>; })}</div>
             </div>
 
             <div id="tasks" hidden={selectedSection !== "tasks"} className="rounded-xl bg-slate-100 p-6">
@@ -1308,8 +1322,8 @@ export default function Home() {
             <div id="archive" hidden={selectedSection !== "archive"} className="rounded-xl bg-white p-6 shadow-sm">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <h3 className="text-xl font-bold">Archive <span className="text-base font-medium text-slate-400">({archivedTasks.length})</span></h3>
-                  <p className="mt-1 text-sm text-slate-500">Completed tasks removed from the team board, with their subtask hierarchy preserved.</p>
+                  <h3 className="text-xl font-bold">Archive <span className="text-base font-medium text-slate-400">({archivedTasks.length + archivedProjects.length})</span></h3>
+                  <p className="mt-1 text-sm text-slate-500">Archived projects, tasks, and subtasks. Only administrators can remove them permanently.</p>
                 </div>
                 <button
                   type="button"
@@ -1320,6 +1334,7 @@ export default function Home() {
                   {archiveCollapsed ? "Maximize" : "Minimize"}
                 </button>
               </div>
+              {!archiveCollapsed && archivedProjects.length > 0 && <div className="mt-5 grid gap-3 sm:grid-cols-2">{archivedProjects.map(project => <article key={project.id} className="rounded-xl border border-amber-200 bg-amber-50/50 p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold">{project.name}</p><p className="mt-1 text-xs text-amber-700">Archived project</p><p className="mt-2 text-sm text-slate-600">{project.description}</p></div>{currentUser.role === "Admin" && <button onClick={() => deleteProject(project)} className="rounded-lg bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">Remove permanently</button>}</div></article>)}</div>}
               {!archiveCollapsed && (archivedTasks.length > 0 ? (
                 <>
                   <div className="mt-5 space-y-3">
@@ -1348,7 +1363,7 @@ export default function Home() {
                   </div>
                 </>
               ) : (
-                <p className="mt-5 rounded-lg border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">No archived tasks yet.</p>
+                !archivedProjects.length && <p className="mt-5 rounded-lg border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">No archived projects, tasks, or subtasks yet.</p>
               ))}
             </div>
 
