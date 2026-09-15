@@ -29,6 +29,10 @@ create table public.tasks (
   assignee_id uuid not null references public.profiles(id),
   created_by_id uuid not null references public.profiles(id),
   parent_id text references public.tasks(id) on delete set null,
+  blocked_by_id text references public.tasks(id) on delete set null,
+  milestone boolean not null default false,
+  milestone_date date,
+  recurrence text not null default 'none' check (recurrence in ('none','daily','weekly','monthly')),
   created_at timestamptz not null default now(),
   assigned_at timestamptz not null default now(),
   due_date date,
@@ -36,6 +40,54 @@ create table public.tasks (
   completed_at timestamptz,
   archived_at timestamptz
 );
+
+create index tasks_blocked_by_id_idx on public.tasks(blocked_by_id);
+create index tasks_milestone_date_idx on public.tasks(milestone_date) where milestone;
+
+create or replace function public.prevent_task_dependency_cycle()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if new.blocked_by_id = new.id then raise exception 'A task cannot depend on itself'; end if;
+  if new.blocked_by_id is not null and exists (
+    with recursive blockers as (
+      select id,blocked_by_id from public.tasks where id=new.blocked_by_id
+      union all select task.id,task.blocked_by_id from public.tasks task join blockers on task.id=blockers.blocked_by_id
+    ) select 1 from blockers where id=new.id
+  ) then raise exception 'This dependency would create a cycle'; end if;
+  return new;
+end;
+$$;
+create trigger prevent_task_dependency_cycle_before_write before insert or update of blocked_by_id on public.tasks
+for each row execute function public.prevent_task_dependency_cycle();
+
+create or replace function public.enforce_task_completion_requirements()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if new.status::text in ('Complete','Completed') and old.status::text not in ('Complete','Completed') then
+    if new.blocked_by_id is not null and exists(select 1 from public.tasks blocker where blocker.id=new.blocked_by_id and blocker.archived_at is null and blocker.status::text not in ('Complete','Completed')) then raise exception 'Complete the blocking task before completing this task'; end if;
+    if exists(select 1 from public.tasks child where child.parent_id=new.id and child.archived_at is null and child.status::text not in ('Complete','Completed')) then raise exception 'Complete all active subtasks before completing the parent task'; end if;
+  end if;
+  return new;
+end;
+$$;
+create trigger enforce_task_completion_requirements_before_update before update on public.tasks
+for each row execute function public.enforce_task_completion_requirements();
+
+create or replace function public.create_next_recurring_task()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare next_start date; next_due date;
+begin
+  if new.status::text in ('Complete','Completed') and old.status::text not in ('Complete','Completed') and new.recurrence<>'none' and new.archived_at is null then
+    next_start:=case new.recurrence when 'daily' then new.start_date+1 when 'weekly' then new.start_date+7 else (new.start_date+interval '1 month')::date end;
+    next_due:=case new.recurrence when 'daily' then new.due_date+1 when 'weekly' then new.due_date+7 else (new.due_date+interval '1 month')::date end;
+    insert into public.tasks(id,title,project_id,description,due,priority,status,progress,assignee_id,created_by_id,parent_id,blocked_by_id,assigned_at,due_date,start_date,milestone,milestone_date,recurrence)
+    values('task-'||gen_random_uuid()::text,new.title,new.project_id,new.description,next_due::text,new.priority,'Not started',0,new.assignee_id,new.created_by_id,new.parent_id,null,now(),next_due,next_start,new.milestone,case when new.milestone then next_due else null end,new.recurrence);
+  end if;
+  return new;
+end;
+$$;
+create trigger create_next_recurring_task_after_completion after update on public.tasks
+for each row execute function public.create_next_recurring_task();
 
 create table public.notes (
   id text primary key,
