@@ -252,26 +252,10 @@ export async function POST(request: Request) {
     }
 
     if (input.action === "restore_task") {
-      if (context.profile.role !== "Admin") return fail("Only admins can restore tasks.", 403);
-      if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return fail("The server service key is required to restore tasks.", 503);
-      const admin = createSupabaseAdminClient();
-      const { data: taskRows, error: lookupError } = await admin.from("tasks").select("id, parent_id, archived_at");
-      if (lookupError) return fail(lookupError.message, 500);
-      const rows = (taskRows ?? []) as Array<{ id: string; parent_id: string | null; archived_at: string | null }>;
-      const task = rows.find(row => row.id === input.taskId && row.archived_at);
-      if (!task) return fail("Archived task not found.", 404);
-      const restoreIds = [task.id];
-      for (let index = 0; index < restoreIds.length; index += 1) rows.filter(row => row.parent_id === restoreIds[index] && row.archived_at).forEach(child => restoreIds.push(child.id));
-      let parentId = task.parent_id;
-      while (parentId) {
-        const parent = rows.find(row => row.id === parentId);
-        if (!parent) break;
-        if (parent.archived_at && !restoreIds.includes(parent.id)) restoreIds.push(parent.id);
-        parentId = parent.parent_id;
-      }
-      const { error } = await admin.from("tasks").update({ archived_at: null }).in("id", restoreIds);
+      const { data, error } = await context.client.rpc("restore_task_tree", { target_task_id: input.taskId });
       if (error) return fail(error.message);
-      return NextResponse.json({ ok: true, restoredTaskIds: restoreIds });
+      if (!data?.length) return fail("Archived task not found.", 404);
+      return NextResponse.json({ ok: true, restoredTaskIds: data });
     }
 
     if (input.action === "edit_task") {
