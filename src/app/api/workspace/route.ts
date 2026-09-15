@@ -15,6 +15,7 @@ const actionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("update_profile"), name: z.string().trim().min(2).max(120) }),
   z.object({ action: z.literal("create_project"), name: z.string().trim().min(2).max(160), description: z.string().trim().max(1000).default("") }),
   z.object({ action: z.literal("delete_project"), projectId: z.string().min(1) }),
+  z.object({ action: z.literal("archive_project"), projectId: z.string().min(1) }),
   z.object({ action: z.literal("create_task"), title: z.string().trim().min(2).max(200), description: z.string().trim().max(5000).default(""), projectId: z.string().min(1), assigneeId: z.string().uuid(), parentId: z.string().nullable().optional(), priority: prioritySchema, startDate: z.iso.date(), dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }),
   z.object({ action: z.literal("edit_task"), taskId: z.string().min(1), title: z.string().trim().min(2).max(200), description: z.string().trim().max(5000), assigneeId: z.string().uuid(), priority: prioritySchema, startDate: z.iso.date(), dueDate: z.iso.date() }),
   z.object({ action: z.literal("delete_task"), taskId: z.string().min(1) }),
@@ -113,7 +114,12 @@ export async function GET(request: Request) {
     const users = (profiles.data ?? []).map((item) => ({ ...userFromProfile(item as ProfileRow), email: emailById.get(item.id) ?? (item.id === user.id ? user.email ?? "" : "") }));
     const activeTasks = (tasks.data ?? []).filter((task) => !task.archived_at);
     const archivedTasks = (tasks.data ?? []).filter((task) => Boolean(task.archived_at));
-    return NextResponse.json({ currentUser: { ...userFromProfile(profile), email: user.email ?? "" }, users, projects: (projects.data ?? []).map(projectFromRow), tasks: activeTasks.map(taskFromRow), archivedTasks: archivedTasks.map(taskFromRow), notes: (notes.data ?? []).map(noteFromRow), progressLogs: (progressLogs.data ?? []).map(progressFromRow) }, { headers: { "Cache-Control": "no-store" } });
+    const allProjects = (projects.data ?? []).map(projectFromRow);
+    const archivedProjectIds = new Set(allProjects.filter(project => {
+      const rows = (tasks.data ?? []).filter(task => task.project_id === project.id);
+      return rows.length > 0 && rows.every(task => Boolean(task.archived_at));
+    }).map(project => project.id));
+    return NextResponse.json({ currentUser: { ...userFromProfile(profile), email: user.email ?? "" }, users, projects: allProjects.filter(project => !archivedProjectIds.has(String(project.id))), archivedProjects: allProjects.filter(project => archivedProjectIds.has(String(project.id))), tasks: activeTasks.map(taskFromRow), archivedTasks: archivedTasks.map(taskFromRow), notes: (notes.data ?? []).map(noteFromRow), progressLogs: (progressLogs.data ?? []).map(progressFromRow) }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return fail(error instanceof Error ? error.message : "Unable to load workspace.", 401);
   }
@@ -177,9 +183,21 @@ export async function POST(request: Request) {
       if (context.profile.role !== "Admin") return fail("Only admins can remove projects.", 403);
       const { data: projectTasks, error: taskLookupError } = await context.client.from("tasks").select("id").eq("project_id", input.projectId);
       if (taskLookupError) return fail(taskLookupError.message, 500);
+      const { data: activeProjectTask } = await context.client.from("tasks").select("id").eq("project_id", input.projectId).is("archived_at", null).limit(1).maybeSingle();
+      if (activeProjectTask) return fail("Archive the project before removing it.");
       if (process.env.SUPABASE_SERVICE_ROLE_KEY) await removeTaskAttachments(createSupabaseAdminClient(), (projectTasks ?? []).map(task => task.id));
       const { data, error } = await context.client.from("projects").delete().eq("id", input.projectId).select("id").single();
       if (error || !data) return fail(error?.message ?? "Project not found.", error?.code === "PGRST116" ? 404 : 400);
+      return NextResponse.json({ ok: true });
+    }
+
+    if (input.action === "archive_project") {
+      if (context.profile.role !== "Admin") return fail("Only admins can archive projects.", 403);
+      const { data: rows, error: lookupError } = await context.client.from("tasks").select("id").eq("project_id", input.projectId).is("archived_at", null);
+      if (lookupError) return fail(lookupError.message, 500);
+      if (!rows?.length) return fail("This project has no active tasks to archive.");
+      const { error } = await context.client.from("tasks").update({ archived_at: new Date().toISOString() }).eq("project_id", input.projectId).is("archived_at", null);
+      if (error) return fail(error.message);
       return NextResponse.json({ ok: true });
     }
 
@@ -205,7 +223,10 @@ export async function POST(request: Request) {
       const { data: taskRows, error: tasksError } = await context.client.from("tasks").select("id, parent_id");
       if (tasksError) return fail(tasksError.message, 500);
       const rows = (taskRows ?? []) as Array<{ id: string; parent_id: string | null }>;
-      if (!rows.some(row => row.id === input.taskId)) return fail("Task not found.", 404);
+      const target = (taskRows ?? []).find(row => row.id === input.taskId) as { id: string; parent_id: string | null; archived_at?: string | null } | undefined;
+      if (!target) return fail("Task not found.", 404);
+      const { data: archivedTarget } = await context.client.from("tasks").select("id").eq("id", input.taskId).not("archived_at", "is", null).maybeSingle();
+      if (!archivedTarget) return fail("Archive the task before removing it.");
       const removeIds = [input.taskId];
       for (let index = 0; index < removeIds.length; index += 1) {
         rows.filter(row => row.parent_id === removeIds[index]).forEach(child => removeIds.push(child.id));
@@ -270,12 +291,12 @@ export async function POST(request: Request) {
     }
 
     if (input.action === "archive_task") {
-      if (context.profile.role !== "Admin" && context.profile.role !== "Manager") return fail("Only admins and managers can archive tasks.", 403);
-      const { data: taskRows, error: tasksError } = await context.client.from("tasks").select("id, parent_id, status, archived_at");
+      const { data: taskRows, error: tasksError } = await context.client.from("tasks").select("id, parent_id, status, archived_at, created_by_id");
       if (tasksError) return fail(tasksError.message, 500);
-      const rows = (taskRows ?? []) as Array<{ id: string; parent_id: string | null; status: string; archived_at: string | null }>;
+      const rows = (taskRows ?? []) as Array<{ id: string; parent_id: string | null; status: string; archived_at: string | null; created_by_id: string }>;
       const task = rows.find((row) => row.id === input.taskId);
       if (!task || task.archived_at) return fail("Task not found.", 404);
+      if (!["Admin", "Manager"].includes(context.profile.role) && task.created_by_id !== context.user.id) return fail("Only the creator or an administrator can archive this task.", 403);
       const descendants: typeof rows = [];
       const collectDescendants = (parentId: string) => {
         rows.filter((row) => row.parent_id === parentId).forEach((child) => {
@@ -284,10 +305,9 @@ export async function POST(request: Request) {
         });
       };
       collectDescendants(task.id);
-      if (!isCompletedStatus(task.status)) return fail("Only completed tasks can be archived.");
-      if (descendants.some((child) => !isCompletedStatus(child.status))) return fail("Complete all subtasks before archiving this task.");
       const archiveIds = [task.id, ...descendants.map((child) => child.id)];
-      const { error: archiveError } = await context.client.from("tasks").update({ archived_at: new Date().toISOString() }).in("id", archiveIds);
+      if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return fail("The server service key is required to archive tasks.", 503);
+      const { error: archiveError } = await createSupabaseAdminClient().from("tasks").update({ archived_at: new Date().toISOString() }).in("id", archiveIds);
       if (archiveError) return fail(archiveError.message);
       return NextResponse.json({ ok: true, archivedTaskIds: archiveIds });
     }
