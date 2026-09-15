@@ -16,9 +16,11 @@ const actionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("create_project"), name: z.string().trim().min(2).max(160), description: z.string().trim().max(1000).default("") }),
   z.object({ action: z.literal("delete_project"), projectId: z.string().min(1) }),
   z.object({ action: z.literal("archive_project"), projectId: z.string().min(1) }),
+  z.object({ action: z.literal("restore_project"), projectId: z.string().min(1) }),
   z.object({ action: z.literal("create_task"), title: z.string().trim().min(2).max(200), description: z.string().trim().max(5000).default(""), projectId: z.string().min(1), assigneeId: z.string().uuid(), parentId: z.string().nullable().optional(), priority: prioritySchema, startDate: z.iso.date(), dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }),
   z.object({ action: z.literal("edit_task"), taskId: z.string().min(1), title: z.string().trim().min(2).max(200), description: z.string().trim().max(5000), assigneeId: z.string().uuid(), priority: prioritySchema, startDate: z.iso.date(), dueDate: z.iso.date() }),
   z.object({ action: z.literal("delete_task"), taskId: z.string().min(1) }),
+  z.object({ action: z.literal("restore_task"), taskId: z.string().min(1) }),
   z.object({ action: z.literal("add_note"), taskId: z.string().min(1), text: z.string().trim().min(1).max(5000) }),
   z.object({ action: z.literal("mark_messages_read"), taskId: z.string().min(1) }),
   z.object({ action: z.literal("save_employee_update"), taskId: z.string().min(1), description: z.string().trim().max(5000), status: statusSchema, progress: z.number().int().min(0).max(100) }),
@@ -201,6 +203,15 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true });
     }
 
+    if (input.action === "restore_project") {
+      if (context.profile.role !== "Admin") return fail("Only admins can restore projects.", 403);
+      if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return fail("The server service key is required to restore projects.", 503);
+      const { data, error } = await createSupabaseAdminClient().from("tasks").update({ archived_at: null }).eq("project_id", input.projectId).not("archived_at", "is", null).select("id");
+      if (error) return fail(error.message);
+      if (!data?.length) return fail("Archived project not found.", 404);
+      return NextResponse.json({ ok: true });
+    }
+
     if (input.action === "create_task") {
       if (!["Admin", "Manager", "Senior Employee"].includes(context.profile.role)) return fail("You cannot create tasks.", 403);
       if (context.profile.role === "Admin" && !process.env.SUPABASE_SERVICE_ROLE_KEY) return fail("The server service key is required for admins to create tasks.", 503);
@@ -237,6 +248,29 @@ export async function POST(request: Request) {
       const { error } = await admin.from("tasks").delete().in("id", removeIds);
       if (error) return fail(error.message);
       return NextResponse.json({ ok: true, removedTaskIds: removeIds });
+    }
+
+    if (input.action === "restore_task") {
+      if (context.profile.role !== "Admin") return fail("Only admins can restore tasks.", 403);
+      if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return fail("The server service key is required to restore tasks.", 503);
+      const admin = createSupabaseAdminClient();
+      const { data: taskRows, error: lookupError } = await admin.from("tasks").select("id, parent_id, archived_at");
+      if (lookupError) return fail(lookupError.message, 500);
+      const rows = (taskRows ?? []) as Array<{ id: string; parent_id: string | null; archived_at: string | null }>;
+      const task = rows.find(row => row.id === input.taskId && row.archived_at);
+      if (!task) return fail("Archived task not found.", 404);
+      const restoreIds = [task.id];
+      for (let index = 0; index < restoreIds.length; index += 1) rows.filter(row => row.parent_id === restoreIds[index] && row.archived_at).forEach(child => restoreIds.push(child.id));
+      let parentId = task.parent_id;
+      while (parentId) {
+        const parent = rows.find(row => row.id === parentId);
+        if (!parent) break;
+        if (parent.archived_at && !restoreIds.includes(parent.id)) restoreIds.push(parent.id);
+        parentId = parent.parent_id;
+      }
+      const { error } = await admin.from("tasks").update({ archived_at: null }).in("id", restoreIds);
+      if (error) return fail(error.message);
+      return NextResponse.json({ ok: true, restoredTaskIds: restoreIds });
     }
 
     if (input.action === "edit_task") {
