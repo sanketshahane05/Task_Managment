@@ -45,6 +45,10 @@ type Task = {
   assigneeId: string;
   createdById: string;
   parentId: string | null;
+  blockedById?: string | null;
+  milestone?: boolean;
+  milestoneDate?: string;
+  recurrence?: "none" | "daily" | "weekly" | "monthly";
   createdAt?: string;
   assignedAt?: string;
   dueDate?: string;
@@ -160,6 +164,10 @@ export default function Home() {
     "Medium",
   );
   const [newTaskParentId, setNewTaskParentId] = useState("");
+  const [newTaskBlockedById, setNewTaskBlockedById] = useState("");
+  const [newTaskMilestone, setNewTaskMilestone] = useState(false);
+  const [newTaskMilestoneDate, setNewTaskMilestoneDate] = useState(localDateInput);
+  const [newTaskRecurrence, setNewTaskRecurrence] = useState<Task["recurrence"]>("none");
 
   const [noteTaskId, setNoteTaskId] = useState<string | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
@@ -558,6 +566,10 @@ export default function Home() {
     setNewTaskTitle("");
     setNewTaskDescription("");
     setNewTaskParentId(parent?.id ?? "");
+    setNewTaskBlockedById("");
+    setNewTaskMilestone(false);
+    setNewTaskMilestoneDate(parent?.dueDate ?? today);
+    setNewTaskRecurrence("none");
     setNewTaskProjectId(parent?.projectId ?? projects[0]?.id ?? "");
     setNewTaskAssigneeId(parent && employees.some((user) => user.id === parent.assigneeId) ? parent.assigneeId : employees[0]?.id ?? "");
     setNewTaskPriority(parent?.priority ?? "Medium");
@@ -573,6 +585,10 @@ export default function Home() {
     setNewTaskTitle(task.title);
     setNewTaskDescription(task.description);
     setNewTaskParentId(task.parentId ?? "");
+    setNewTaskBlockedById(task.blockedById ?? "");
+    setNewTaskMilestone(Boolean(task.milestone));
+    setNewTaskMilestoneDate(task.milestoneDate ?? task.dueDate ?? localDateInput());
+    setNewTaskRecurrence(task.recurrence ?? "none");
     setNewTaskProjectId(task.projectId);
     setNewTaskAssigneeId(task.assigneeId);
     setNewTaskPriority(task.priority);
@@ -604,11 +620,14 @@ export default function Home() {
 
     setSavingTask(true);
     try {
-      await apiRequest(editingTaskId ? "edit_task" : "create_task", { ...(editingTaskId ? { taskId: editingTaskId } : {}), title: newTaskTitle, description: newTaskDescription, projectId, assigneeId, parentId, priority: newTaskPriority, dueDate: newTaskDue, startDate: newTaskStart });
+      await apiRequest(editingTaskId ? "edit_task" : "create_task", { ...(editingTaskId ? { taskId: editingTaskId } : {}), title: newTaskTitle, description: newTaskDescription, projectId, assigneeId, parentId, blockedById: newTaskBlockedById || null, milestone: newTaskMilestone, milestoneDate: newTaskMilestone ? newTaskMilestoneDate : null, recurrence: newTaskRecurrence, priority: newTaskPriority, dueDate: newTaskDue, startDate: newTaskStart });
       await loadWorkspace();
       setNewTaskTitle("");
       setNewTaskDescription("");
       setNewTaskParentId("");
+      setNewTaskBlockedById("");
+      setNewTaskMilestone(false);
+      setNewTaskRecurrence("none");
       setModal(null);
       setNotice(editingTaskId ? "Task changes saved." : "Task created and assigned.");
       setEditingTaskId(null);
@@ -778,6 +797,8 @@ export default function Home() {
     const canAddSubtask = (["Admin", "Manager"].includes(currentUser?.role ?? "") && !task.parentId) || (currentUser?.role === "Senior Employee" && task.assigneeId === currentUser.id);
     const canManage = ["Admin", "Manager"].includes(currentUser?.role ?? "");
     const unreadCount = taskNotes.filter(isNewMessage).length;
+    const blocker = task.blockedById ? tasks.find(item => item.id === task.blockedById) : null;
+    const isBlocked = Boolean(blocker && blocker.status !== "Completed");
     const openDetails = () => { setChatOpen(false); setSelectedTaskId(task.id); };
     if (!detailed) return (
       <div key={task.id} className={depth ? "ml-2 border-l-2 border-indigo-100 pl-3 sm:ml-5" : ""}>
@@ -786,7 +807,7 @@ export default function Home() {
             <button onClick={openDetails} className="min-w-0 flex-1 break-words text-left text-base font-bold leading-relaxed text-slate-900 hover:text-indigo-600">{task.title}</button>
             {(canAddSubtask || canManage || canArchiveTask(task)) && <details className="relative shrink-0" onClick={(event) => { if ((event.target as HTMLElement).closest("button")) event.currentTarget.open = false; }}><summary aria-label={"Actions for " + task.title} className="cursor-pointer list-none rounded-lg px-3 py-1 text-lg font-bold text-slate-500 hover:bg-slate-100">⋯</summary><div className="absolute right-0 z-10 mt-1 w-44 rounded-xl border border-slate-200 bg-white p-1 shadow-lg">{canAddSubtask && <button onClick={() => openTaskForm(task)} className="block w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100">Add subtask</button>}{canManage && <button onClick={() => openEditTask(task)} className="block w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100">Edit / reassign</button>}{canArchiveTask(task) && <button onClick={() => archiveTask(task)} className="block w-full rounded-lg px-3 py-2 text-left text-sm text-amber-700 hover:bg-slate-100">Archive</button>}</div></details>}
           </div>
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs"><span className="rounded-full bg-indigo-50 px-2 py-1 font-semibold text-indigo-700">{task.status}</span><span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">{task.priority}</span>{task.reviewState && task.reviewState !== "none" && <button onClick={openDetails} className="rounded-full bg-amber-50 px-2 py-1 font-semibold text-amber-700">{task.reviewState === "pending" ? "Awaiting review" : task.reviewState === "changes_requested" ? "Changes requested" : "Approved"}</button>}</div>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs"><span className="rounded-full bg-indigo-50 px-2 py-1 font-semibold text-indigo-700">{task.status}</span><span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">{task.priority}</span>{task.milestone && <button onClick={openDetails} className="rounded-full bg-amber-50 px-2 py-1 font-semibold text-amber-700">Milestone</button>}{task.recurrence && task.recurrence !== "none" && <button onClick={openDetails} className="rounded-full bg-sky-50 px-2 py-1 font-semibold text-sky-700">↻ {task.recurrence}</button>}{isBlocked && <button onClick={openDetails} className="rounded-full bg-orange-50 px-2 py-1 font-semibold text-orange-700">Blocked</button>}{task.reviewState && task.reviewState !== "none" && <button onClick={openDetails} className="rounded-full bg-amber-50 px-2 py-1 font-semibold text-amber-700">{task.reviewState === "pending" ? "Awaiting review" : task.reviewState === "changes_requested" ? "Changes requested" : "Approved"}</button>}</div>
           <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-slate-500"><span>{getUserName(task.assigneeId)}</span><span>Due {task.dueDate ? formatDateOnly(task.dueDate) : task.due}</span><span className="flex items-center gap-2"><span className="h-1.5 w-20 overflow-hidden rounded-full bg-slate-100"><span className="block h-full rounded-full bg-indigo-600" style={{width: task.progress + "%"}} /></span><span className="font-semibold text-indigo-600">{task.progress}%</span></span></div>
           <div className="mt-3 flex flex-wrap items-center gap-4 text-xs font-semibold text-indigo-600"><button onClick={openDetails}>View details</button>{children.length > 0 && <button aria-expanded={Boolean(expandedTasks[task.id])} onClick={() => setExpandedTasks((current) => ({...current,[task.id]: !current[task.id]}))}>{expandedTasks[task.id] ? "▾" : "▸"} {children.length} subtasks</button>}<button onClick={() => toggleMessages(task.id)}>{unreadCount ? unreadCount + " unread messages" : "Chat · " + taskNotes.length}</button></div>
         </article>
@@ -811,6 +832,9 @@ export default function Home() {
                 <span className="rounded-full bg-violet-50 px-2 py-1 text-xs text-violet-700">
                   {task.parentId ? "Subtask" : "Task"}
                 </span>
+                {isBlocked && <span className="rounded-full bg-orange-50 px-2 py-1 text-xs font-semibold text-orange-700">Blocked</span>}
+                {task.milestone && <span className="rounded-full bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-700">Milestone · {formatDateOnly(task.milestoneDate)}</span>}
+                {task.recurrence && task.recurrence !== "none" && <span className="rounded-full bg-sky-50 px-2 py-1 text-xs font-semibold text-sky-700">Repeats {task.recurrence}</span>}
               </div>
               <p className="mt-2 whitespace-pre-wrap break-words text-sm text-slate-500">{task.description}</p>
               <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400">
@@ -819,6 +843,7 @@ export default function Home() {
                 <span>Due: {task.dueDate ? formatDateOnly(task.dueDate) : task.due}</span>
                 <span>Assigned to: <strong className="font-semibold text-slate-600">{getUserName(task.assigneeId)}</strong></span>
                 <span>Assigned by: <strong className="font-semibold text-slate-600">{getUserName(task.createdById)}</strong></span>
+                {blocker && <span>Depends on: <button onClick={() => setSelectedTaskId(blocker.id)} className="font-semibold text-indigo-600 hover:underline">{blocker.title}</button>{blocker.status === "Completed" ? " · Complete" : " · Blocking"}</span>}
               </div>
             </div>
             <div className="w-full shrink-0 lg:w-32 lg:text-right">
@@ -1521,7 +1546,7 @@ export default function Home() {
       )}
 
       {modal === "task" && ["Admin", "Manager", "Senior Employee"].includes(currentUser.role) && (
-        <div className="fixed inset-0 z-20 flex items-center justify-center overflow-y-auto bg-slate-900/40 p-4"><div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl"><div className="flex items-center justify-between"><div><h2 className="text-xl font-bold">{editingTaskId ? "Edit task" : "Create task or subtask"}</h2><p className="mt-1 text-sm text-slate-500">Assign work to a team member. Senior employees can assign subtasks to employees.</p></div><button onClick={() => setModal(null)} className="text-xl text-slate-400">×</button></div><form onSubmit={createTask} className="mt-6 space-y-4">{taskFormError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{taskFormError}</p>}<input autoFocus value={newTaskTitle} onChange={(event) => setNewTaskTitle(event.target.value)} placeholder="Task title" className="w-full rounded-lg border px-4 py-3" /><textarea value={newTaskDescription} onChange={(event) => setNewTaskDescription(event.target.value)} placeholder="Task description" rows={3} className="w-full resize-none rounded-lg border px-4 py-3" /><div className="grid gap-4 md:grid-cols-2"><select aria-label="Task project" disabled={Boolean(editingTaskId) || currentUser.role === "Senior Employee"} value={newTaskProjectId || projects[0]?.id} onChange={(event) => { setNewTaskProjectId(event.target.value); setNewTaskParentId(""); }} className="rounded-lg border px-4 py-3">{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select><select aria-label="Assign to" value={newTaskAssigneeId || employees[0]?.id} onChange={(event) => setNewTaskAssigneeId(event.target.value)} className="rounded-lg border px-4 py-3">{employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name} ({visibleTasks.filter(task => task.assigneeId === employee.id && task.status !== "Completed").length} active)</option>)}</select><select aria-label="Parent task" disabled={Boolean(editingTaskId) || currentUser.role === "Senior Employee"} value={newTaskParentId} onChange={(event) => setNewTaskParentId(event.target.value)} className="rounded-lg border px-4 py-3"><option value="">Top-level task</option>{tasks.filter((task) => (currentUser.role === "Senior Employee" ? task.assigneeId === currentUser.id : !task.parentId) && task.projectId === (newTaskProjectId || projects[0]?.id)).map((task) => <option key={task.id} value={task.id}>Subtask of: {task.title}</option>)}</select><select value={newTaskPriority} onChange={(event) => setNewTaskPriority(event.target.value as Task["priority"])} className="rounded-lg border px-4 py-3"><option>High</option><option>Medium</option><option>Low</option></select></div><label className="block text-sm font-semibold text-slate-700">Start date<input required type="date" value={newTaskStart} onChange={(event) => { setNewTaskStart(event.target.value); if (event.target.value > newTaskDue) setNewTaskDue(event.target.value); }} className="mt-1 w-full rounded-lg border px-4 py-3 font-normal" /></label><label className="block text-sm font-semibold text-slate-700">Due date<input required min={newTaskStart} type="date" value={newTaskDue} onChange={(event) => setNewTaskDue(event.target.value)} className="mt-1 w-full rounded-lg border px-4 py-3 font-normal" /></label>{employees.length === 0 && <p className="text-sm text-amber-700">No eligible employees are available. Ask an admin to create an Employee account.</p>}<button disabled={employees.length === 0 || savingTask} className="w-full rounded-lg bg-indigo-600 px-4 py-3 font-semibold text-white disabled:opacity-40">{savingTask ? "Saving…" : editingTaskId ? "Save changes" : "Create and assign task"}</button></form></div></div>
+        <div className="fixed inset-0 z-20 flex items-center justify-center overflow-y-auto bg-slate-900/40 p-4"><div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl"><div className="flex items-center justify-between"><div><h2 className="text-xl font-bold">{editingTaskId ? "Edit task" : "Create task or subtask"}</h2><p className="mt-1 text-sm text-slate-500">Assign work to a team member. Senior employees can assign subtasks to employees.</p></div><button onClick={() => setModal(null)} className="text-xl text-slate-400">×</button></div><form onSubmit={createTask} className="mt-6 space-y-4">{taskFormError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{taskFormError}</p>}<input autoFocus value={newTaskTitle} onChange={(event) => setNewTaskTitle(event.target.value)} placeholder="Task title" className="w-full rounded-lg border px-4 py-3" /><textarea value={newTaskDescription} onChange={(event) => setNewTaskDescription(event.target.value)} placeholder="Task description" rows={3} className="w-full resize-none rounded-lg border px-4 py-3" /><div className="grid gap-4 md:grid-cols-2"><select aria-label="Task project" disabled={Boolean(editingTaskId) || currentUser.role === "Senior Employee"} value={newTaskProjectId || projects[0]?.id} onChange={(event) => { setNewTaskProjectId(event.target.value); setNewTaskParentId(""); setNewTaskBlockedById(""); }} className="rounded-lg border px-4 py-3">{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select><select aria-label="Assign to" value={newTaskAssigneeId || employees[0]?.id} onChange={(event) => setNewTaskAssigneeId(event.target.value)} className="rounded-lg border px-4 py-3">{employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name} ({visibleTasks.filter(task => task.assigneeId === employee.id && task.status !== "Completed").length} active)</option>)}</select><select aria-label="Parent task" disabled={Boolean(editingTaskId) || currentUser.role === "Senior Employee"} value={newTaskParentId} onChange={(event) => setNewTaskParentId(event.target.value)} className="rounded-lg border px-4 py-3"><option value="">Top-level task</option>{tasks.filter((task) => (currentUser.role === "Senior Employee" ? task.assigneeId === currentUser.id : !task.parentId) && task.projectId === (newTaskProjectId || projects[0]?.id)).map((task) => <option key={task.id} value={task.id}>Subtask of: {task.title}</option>)}</select><select value={newTaskPriority} onChange={(event) => setNewTaskPriority(event.target.value as Task["priority"])} className="rounded-lg border px-4 py-3"><option>High</option><option>Medium</option><option>Low</option></select></div><label className="block text-sm font-semibold text-slate-700">Blocked by<select aria-label="Task dependency" value={newTaskBlockedById} onChange={(event) => setNewTaskBlockedById(event.target.value)} className="mt-1 w-full rounded-lg border px-4 py-3 font-normal"><option value="">No dependency</option>{tasks.filter(task => !task.archivedAt && task.id !== editingTaskId && task.projectId === (newTaskProjectId || projects[0]?.id)).map(task => <option key={task.id} value={task.id}>{task.title} · {task.status}</option>)}</select><span className="mt-1 block text-xs font-normal text-slate-500">The task cannot be completed until this dependency is complete.</span></label><div className="grid gap-4 md:grid-cols-2"><label className="flex items-center gap-3 rounded-lg border px-4 py-3 text-sm font-semibold"><input type="checkbox" checked={newTaskMilestone} onChange={(event) => setNewTaskMilestone(event.target.checked)} /> Project milestone</label><label className="text-sm font-semibold text-slate-700">Repeat<select value={newTaskRecurrence} onChange={(event) => setNewTaskRecurrence(event.target.value as Task["recurrence"])} className="mt-1 w-full rounded-lg border px-4 py-3 font-normal"><option value="none">Does not repeat</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label></div>{newTaskMilestone && <label className="block text-sm font-semibold text-slate-700">Milestone date<input required type="date" value={newTaskMilestoneDate} onChange={(event) => setNewTaskMilestoneDate(event.target.value)} className="mt-1 w-full rounded-lg border px-4 py-3 font-normal" /></label>}<label className="block text-sm font-semibold text-slate-700">Start date<input required type="date" value={newTaskStart} onChange={(event) => { setNewTaskStart(event.target.value); if (event.target.value > newTaskDue) setNewTaskDue(event.target.value); }} className="mt-1 w-full rounded-lg border px-4 py-3 font-normal" /></label><label className="block text-sm font-semibold text-slate-700">Due date<input required min={newTaskStart} type="date" value={newTaskDue} onChange={(event) => setNewTaskDue(event.target.value)} className="mt-1 w-full rounded-lg border px-4 py-3 font-normal" /></label>{employees.length === 0 && <p className="text-sm text-amber-700">No eligible employees are available. Ask an admin to create an Employee account.</p>}<button disabled={employees.length === 0 || savingTask} className="w-full rounded-lg bg-indigo-600 px-4 py-3 font-semibold text-white disabled:opacity-40">{savingTask ? "Saving…" : editingTaskId ? "Save changes" : "Create and assign task"}</button></form></div></div>
       )}
     </main>
   );
