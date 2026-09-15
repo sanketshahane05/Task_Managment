@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f4f7fb;
-  --foreground: #0f172a;
+  --background: #f7f3e7;
+  --foreground: #1c1c1c;
 }
 
 @theme inline {
@@ -16,7 +16,7 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
-  background-image: radial-gradient(circle at top right, rgba(99, 102, 241, 0.08), transparent 30rem), linear-gradient(180deg, #f8fafc 0%, #f4f7fb 100%);
+  background-image: radial-gradient(circle at top right, rgba(236, 228, 204, 0.9), transparent 30rem), linear-gradient(180deg, #fbf9f2 0%, #f2ecdc 100%);
 }
 
 button,
@@ -32,7 +32,7 @@ a:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-  outline: 3px solid rgba(99, 102, 241, 0.25);
+  outline: 3px solid rgba(28, 28, 28, 0.28);
   outline-offset: 2px;
 }
 
@@ -41,36 +41,36 @@ button:not(:disabled):active {
 }
 
 ::selection {
-  background: #c7d2fe;
-  color: #1e1b4b;
+  background: #ece4cc;
+  color: #1c1c1c;
+}
+
+/* Mellivo brand palette: charcoal structure with warm honey-cream surfaces. */
+.workspace-theme {
+  --color-slate-50: #faf7ef; --color-slate-100: #f1ead7; --color-slate-200: #ded4b8;
+  --color-slate-300: #c7b994; --color-slate-400: #8c826b; --color-slate-500: #716957;
+  --color-slate-600: #554f43; --color-slate-700: #3d3931; --color-slate-800: #292824;
+  --color-slate-900: #1c1c1c; --color-slate-950: #141414;
+  --color-indigo-50: #f7f2e4; --color-indigo-100: #ece4cc; --color-indigo-200: #ddd0aa;
+  --color-indigo-300: #c9b77e; --color-indigo-400: #9a854a; --color-indigo-500: #4b4536;
+  --color-indigo-600: #1c1c1c; --color-indigo-700: #171717; --color-indigo-900: #1c1c1c; --color-indigo-950: #111111;
 }
 
 /* Dark palette shared by workspace cards, forms, navigation and floating chats. */
 html[data-theme="dark"] {
-  --background: #0b1120;
-  --foreground: #e2e8f0;
+  --background: #111111;
+  --foreground: #ece4cc;
   color-scheme: dark;
 }
 html[data-theme="dark"] body { background: var(--background); }
 html[data-theme="dark"] .workspace-theme {
-  --color-slate-50: #172033;
-  --color-slate-100: #1e293b;
-  --color-slate-200: #334155;
-  --color-slate-300: #475569;
-  --color-slate-400: #94a3b8;
-  --color-slate-500: #a7b5ca;
-  --color-slate-600: #cbd5e1;
-  --color-slate-700: #d8e2ef;
-  --color-slate-800: #e2e8f0;
-  --color-slate-900: #f1f5f9;
-  --color-slate-950: #f8fafc;
-  --color-indigo-50: #202442;
-  --color-indigo-100: #30345b;
-  --color-indigo-200: #434775;
-  --color-indigo-600: #818cf8;
-  --color-indigo-700: #a5b4fc;
-  --color-indigo-900: #c7d2fe;
-  --color-indigo-950: #e0e7ff;
+  --color-slate-50: #24231f; --color-slate-100: #2e2c27; --color-slate-200: #49453a;
+  --color-slate-300: #625d4e; --color-slate-400: #a49b82; --color-slate-500: #c0b79d;
+  --color-slate-600: #d2c9af; --color-slate-700: #ded5bc; --color-slate-800: #e7dec6;
+  --color-slate-900: #ece4cc; --color-slate-950: #fffaf0;
+  --color-indigo-50: #29271f; --color-indigo-100: #3b372a; --color-indigo-200: #5a523b;
+  --color-indigo-300: #8f8056; --color-indigo-400: #c9b77e; --color-indigo-500: #ded3b4;
+  --color-indigo-600: #ece4cc; --color-indigo-700: #f7f1df; --color-indigo-900: #fff8e7; --color-indigo-950: #fffdf6;
   --color-amber-50: #302718;
   --color-amber-100: #43351e;
   --color-amber-200: #65502a;
@@ -88,9 +88,10 @@ html[data-theme="dark"] .workspace-theme {
   --color-violet-50: #29203f;
   --color-violet-700: #c4b5fd;
 }
-html[data-theme="dark"] .workspace-theme :is(.bg-white, .bg-white\/90, .bg-white\/95) { background-color: #111b2d; }
-html[data-theme="dark"] .workspace-theme :is(input, textarea, select) { background-color: #111b2d; color: #e2e8f0; border-color: #334155; }
-html[data-theme="dark"] .workspace-theme :is(.bg-indigo-600, .bg-slate-900) { background-color: #4f46e5; }
-html[data-theme="dark"] .workspace-theme .hover\:bg-indigo-700:hover { background-color: #4338ca; }
-html[data-theme="dark"] .workspace-theme .to-white { --tw-gradient-to: #111b2d; }
+html[data-theme="dark"] .workspace-theme :is(.bg-white, .bg-white\/90, .bg-white\/95) { background-color: #1c1c1c; }
+html[data-theme="dark"] .workspace-theme :is(input, textarea, select) { background-color: #24231f; color: #ece4cc; border-color: #49453a; }
+html[data-theme="dark"] .workspace-theme :is(.bg-indigo-600, .bg-slate-900) { background-color: #ece4cc; color: #1c1c1c; }
+html[data-theme="dark"] .workspace-theme .hover\:bg-indigo-700:hover { background-color: #ddd3b7; color: #1c1c1c; }
+html[data-theme="dark"] .workspace-theme .to-white { --tw-gradient-to: #1c1c1c; }
 html[data-theme="dark"] .workspace-theme img { background-color: white; }
+
