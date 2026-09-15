@@ -14,8 +14,10 @@ const actionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("update_user"), userId: z.string().uuid(), role: roleSchema.optional(), active: z.boolean().optional() }),
   z.object({ action: z.literal("update_profile"), name: z.string().trim().min(2).max(120) }),
   z.object({ action: z.literal("create_project"), name: z.string().trim().min(2).max(160), description: z.string().trim().max(1000).default("") }),
+  z.object({ action: z.literal("delete_project"), projectId: z.string().min(1) }),
   z.object({ action: z.literal("create_task"), title: z.string().trim().min(2).max(200), description: z.string().trim().max(5000).default(""), projectId: z.string().min(1), assigneeId: z.string().uuid(), parentId: z.string().nullable().optional(), priority: prioritySchema, startDate: z.iso.date(), dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }),
   z.object({ action: z.literal("edit_task"), taskId: z.string().min(1), title: z.string().trim().min(2).max(200), description: z.string().trim().max(5000), assigneeId: z.string().uuid(), priority: prioritySchema, startDate: z.iso.date(), dueDate: z.iso.date() }),
+  z.object({ action: z.literal("delete_task"), taskId: z.string().min(1) }),
   z.object({ action: z.literal("add_note"), taskId: z.string().min(1), text: z.string().trim().min(1).max(5000) }),
   z.object({ action: z.literal("mark_messages_read"), taskId: z.string().min(1) }),
   z.object({ action: z.literal("save_employee_update"), taskId: z.string().min(1), description: z.string().trim().max(5000), status: statusSchema, progress: z.number().int().min(0).max(100) }),
@@ -62,6 +64,18 @@ async function getContext() {
 }
 function fail(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
+}
+
+async function removeTaskAttachments(admin: ReturnType<typeof createSupabaseAdminClient>, taskIds: string[]) {
+  for (const taskId of taskIds) {
+    while (true) {
+      const { data, error } = await admin.storage.from("task-attachments").list(taskId, { limit: 100, offset: 0 });
+      if (error || !data?.length) break;
+      const paths = data.map(file => `${taskId}/${file.name}`);
+      const { error: removeError } = await admin.storage.from("task-attachments").remove(paths);
+      if (removeError || data.length < 100) break;
+    }
+  }
 }
 
 export async function GET(request: Request) {
@@ -159,8 +173,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true });
     }
 
+    if (input.action === "delete_project") {
+      if (context.profile.role !== "Admin") return fail("Only admins can remove projects.", 403);
+      const { data: projectTasks, error: taskLookupError } = await context.client.from("tasks").select("id").eq("project_id", input.projectId);
+      if (taskLookupError) return fail(taskLookupError.message, 500);
+      if (process.env.SUPABASE_SERVICE_ROLE_KEY) await removeTaskAttachments(createSupabaseAdminClient(), (projectTasks ?? []).map(task => task.id));
+      const { data, error } = await context.client.from("projects").delete().eq("id", input.projectId).select("id").single();
+      if (error || !data) return fail(error?.message ?? "Project not found.", error?.code === "PGRST116" ? 404 : 400);
+      return NextResponse.json({ ok: true });
+    }
+
     if (input.action === "create_task") {
-      if (!["Manager", "Senior Employee"].includes(context.profile.role)) return fail("You cannot create tasks.", 403);
+      if (!["Admin", "Manager", "Senior Employee"].includes(context.profile.role)) return fail("You cannot create tasks.", 403);
+      if (context.profile.role === "Admin" && !process.env.SUPABASE_SERVICE_ROLE_KEY) return fail("The server service key is required for admins to create tasks.", 503);
       const { data: assignee } = await context.client.from("profiles").select("role, active").eq("id", input.assigneeId).single();
       if (!assignee?.active || !["Senior Employee", "Employee"].includes(assignee.role)) return fail("Choose an active employee.");
       if (input.parentId) {
@@ -169,9 +194,28 @@ export async function POST(request: Request) {
         if (context.profile.role === "Senior Employee" && (parent.assignee_id !== context.user.id || assignee.role !== "Employee")) return fail("You may delegate only your assigned tasks to employees.", 403);
       } else if (context.profile.role === "Senior Employee") return fail("Senior employees must select an assigned parent task.", 403);
       if (input.dueDate < input.startDate) return fail("Due date must be on or after the start date.");
-      const { error } = await context.client.from("tasks").insert({ id: `task-${crypto.randomUUID()}`, title: input.title, description: input.description || "No description yet.", project_id: input.projectId, assignee_id: input.assigneeId, created_by_id: context.user.id, parent_id: input.parentId || null, priority: input.priority, due: input.dueDate, due_date: input.dueDate, start_date: input.startDate, status: "Not started", progress: 0 });
+      const taskClient = context.profile.role === "Admin" ? createSupabaseAdminClient() : context.client;
+      const { error } = await taskClient.from("tasks").insert({ id: `task-${crypto.randomUUID()}`, title: input.title, description: input.description || "No description yet.", project_id: input.projectId, assignee_id: input.assigneeId, created_by_id: context.user.id, parent_id: input.parentId || null, priority: input.priority, due: input.dueDate, due_date: input.dueDate, start_date: input.startDate, status: "Not started", progress: 0 });
       if (error) return fail(error.message);
       return NextResponse.json({ ok: true });
+    }
+
+    if (input.action === "delete_task") {
+      if (context.profile.role !== "Admin") return fail("Only admins can remove tasks.", 403);
+      const { data: taskRows, error: tasksError } = await context.client.from("tasks").select("id, parent_id");
+      if (tasksError) return fail(tasksError.message, 500);
+      const rows = (taskRows ?? []) as Array<{ id: string; parent_id: string | null }>;
+      if (!rows.some(row => row.id === input.taskId)) return fail("Task not found.", 404);
+      const removeIds = [input.taskId];
+      for (let index = 0; index < removeIds.length; index += 1) {
+        rows.filter(row => row.parent_id === removeIds[index]).forEach(child => removeIds.push(child.id));
+      }
+      if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return fail("The server service key is required to remove tasks.", 503);
+      const admin = createSupabaseAdminClient();
+      await removeTaskAttachments(admin, removeIds);
+      const { error } = await admin.from("tasks").delete().in("id", removeIds);
+      if (error) return fail(error.message);
+      return NextResponse.json({ ok: true, removedTaskIds: removeIds });
     }
 
     if (input.action === "edit_task") {
@@ -253,3 +297,4 @@ export async function POST(request: Request) {
     return fail(error instanceof Error ? error.message : "Request failed.", 500);
   }
 }
+
