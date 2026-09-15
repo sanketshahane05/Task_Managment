@@ -198,8 +198,9 @@ export async function POST(request: Request) {
       const { data: rows, error: lookupError } = await context.client.from("tasks").select("id").eq("project_id", input.projectId).is("archived_at", null);
       if (lookupError) return fail(lookupError.message, 500);
       if (!rows?.length) return fail("This project has no active tasks to archive.");
-      const { error } = await context.client.from("tasks").update({ archived_at: new Date().toISOString() }).eq("project_id", input.projectId).is("archived_at", null);
+      const { data, error } = await context.client.from("tasks").update({ archived_at: new Date().toISOString() }).eq("project_id", input.projectId).is("archived_at", null).select("id");
       if (error) return fail(error.message);
+      if (!data?.length) return fail("No project tasks were archived.");
       return NextResponse.json({ ok: true });
     }
 
@@ -340,9 +341,15 @@ export async function POST(request: Request) {
       };
       collectDescendants(task.id);
       const archiveIds = [task.id, ...descendants.map((child) => child.id)];
-      if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return fail("The server service key is required to archive tasks.", 503);
-      const { error: archiveError } = await createSupabaseAdminClient().from("tasks").update({ archived_at: new Date().toISOString() }).in("id", archiveIds);
+      const archiveClient = ["Admin", "Manager"].includes(context.profile.role)
+        ? context.client
+        : process.env.SUPABASE_SERVICE_ROLE_KEY
+          ? createSupabaseAdminClient()
+          : null;
+      if (!archiveClient) return fail("The server service key is required for creators to archive delegated work.", 503);
+      const { data: archivedRows, error: archiveError } = await archiveClient.from("tasks").update({ archived_at: new Date().toISOString() }).in("id", archiveIds).select("id");
       if (archiveError) return fail(archiveError.message);
+      if (!archivedRows?.length) return fail("The task could not be archived.");
       return NextResponse.json({ ok: true, archivedTaskIds: archiveIds });
     }
 
