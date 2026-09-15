@@ -693,6 +693,35 @@ export default function Home() {
     }
   };
 
+  const deleteTask = async (task: Task) => {
+    if (currentUser?.role !== "Admin") return;
+    const descendants = getTaskDescendants(task.id);
+    const detail = descendants.length ? ` and ${descendants.length} subtask${descendants.length === 1 ? "" : "s"}` : "";
+    if (!window.confirm(`Permanently remove “${task.title}”${detail}? Messages, updates, attachments, and history linked to this work will also be removed.`)) return;
+    try {
+      await apiRequest("delete_task", { taskId: task.id });
+      setSelectedTaskId(null);
+      await loadWorkspace();
+      setNotice("Task and linked records removed.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Unable to remove task.");
+    }
+  };
+
+  const deleteProject = async (project: Project) => {
+    if (currentUser?.role !== "Admin") return;
+    const projectTaskCount = tasks.filter(task => task.projectId === project.id).length;
+    const detail = projectTaskCount ? ` It contains ${projectTaskCount} task${projectTaskCount === 1 ? "" : "s"}, which will also be permanently removed.` : "";
+    if (!window.confirm(`Permanently remove project “${project.name}”?${detail}`)) return;
+    try {
+      await apiRequest("delete_project", { projectId: project.id });
+      await loadWorkspace();
+      setNotice("Project and linked work removed.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Unable to remove project.");
+    }
+  };
+
   const reviewTask = async (taskId: string, decision: "submit" | "approve" | "request_changes") => {
     if (reviewBusy) return;
     setReviewBusy(taskId);
@@ -734,7 +763,7 @@ export default function Home() {
     const canReview = currentUser && (["Admin", "Manager"].includes(currentUser.role) || (currentUser.role === "Senior Employee" && task.createdById === currentUser.id && task.assigneeId !== currentUser.id));
     const edit = canEditTask ? getEmployeeEdit(task) : null;
     const taskNotes = notes.filter((note) => note.taskId === task.id);
-    const canAddSubtask = (currentUser?.role === "Manager" && !task.parentId) || (currentUser?.role === "Senior Employee" && task.assigneeId === currentUser.id);
+    const canAddSubtask = (["Admin", "Manager"].includes(currentUser?.role ?? "") && !task.parentId) || (currentUser?.role === "Senior Employee" && task.assigneeId === currentUser.id);
     const canManage = ["Admin", "Manager"].includes(currentUser?.role ?? "");
     const unreadCount = taskNotes.filter(isNewMessage).length;
     const openDetails = () => { setChatOpen(false); setSelectedTaskId(task.id); };
@@ -743,7 +772,7 @@ export default function Home() {
         <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex items-start justify-between gap-3">
             <button onClick={openDetails} className="min-w-0 flex-1 break-words text-left text-base font-bold leading-relaxed text-slate-900 hover:text-indigo-600">{task.title}</button>
-            {(canAddSubtask || canManage || canArchiveTask(task)) && <details className="relative shrink-0" onClick={(event) => { if ((event.target as HTMLElement).closest("button")) event.currentTarget.open = false; }}><summary aria-label={"Actions for " + task.title} className="cursor-pointer list-none rounded-lg px-3 py-1 text-lg font-bold text-slate-500 hover:bg-slate-100">⋯</summary><div className="absolute right-0 z-10 mt-1 w-44 rounded-xl border border-slate-200 bg-white p-1 shadow-lg">{canAddSubtask && <button onClick={() => openTaskForm(task)} className="block w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100">Add subtask</button>}{canManage && <button onClick={() => openEditTask(task)} className="block w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100">Edit / reassign</button>}{canArchiveTask(task) && <button onClick={() => archiveTask(task)} className="block w-full rounded-lg px-3 py-2 text-left text-sm text-amber-700 hover:bg-slate-100">Archive task</button>}</div></details>}
+            {(canAddSubtask || canManage || canArchiveTask(task)) && <details className="relative shrink-0" onClick={(event) => { if ((event.target as HTMLElement).closest("button")) event.currentTarget.open = false; }}><summary aria-label={"Actions for " + task.title} className="cursor-pointer list-none rounded-lg px-3 py-1 text-lg font-bold text-slate-500 hover:bg-slate-100">⋯</summary><div className="absolute right-0 z-10 mt-1 w-44 rounded-xl border border-slate-200 bg-white p-1 shadow-lg">{canAddSubtask && <button onClick={() => openTaskForm(task)} className="block w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100">Add subtask</button>}{canManage && <button onClick={() => openEditTask(task)} className="block w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100">Edit / reassign</button>}{canArchiveTask(task) && <button onClick={() => archiveTask(task)} className="block w-full rounded-lg px-3 py-2 text-left text-sm text-amber-700 hover:bg-slate-100">Archive task</button>}{currentUser?.role === "Admin" && <button onClick={() => deleteTask(task)} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-semibold text-red-700 hover:bg-red-50">Remove permanently</button>}</div></details>}
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs"><span className="rounded-full bg-indigo-50 px-2 py-1 font-semibold text-indigo-700">{task.status}</span><span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">{task.priority}</span>{task.reviewState && task.reviewState !== "none" && <button onClick={openDetails} className="rounded-full bg-amber-50 px-2 py-1 font-semibold text-amber-700">{task.reviewState === "pending" ? "Awaiting review" : task.reviewState === "changes_requested" ? "Changes requested" : "Approved"}</button>}</div>
           <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-slate-500"><span>{getUserName(task.assigneeId)}</span><span>Due {task.dueDate ? formatDateOnly(task.dueDate) : task.due}</span><span className="flex items-center gap-2"><span className="h-1.5 w-20 overflow-hidden rounded-full bg-slate-100"><span className="block h-full rounded-full bg-indigo-600" style={{width: task.progress + "%"}} /></span><span className="font-semibold text-indigo-600">{task.progress}%</span></span></div>
@@ -795,9 +824,10 @@ export default function Home() {
             <button onClick={() => toggleMessages(task.id)} className={taskNotes.some(isNewMessage) ? "rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white" : "rounded-lg bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-700"}>
               {taskNotes.some(isNewMessage) ? "New messages" : "Open chat"} · {taskNotes.length}
             </button>
-            {((currentUser?.role === "Manager" && !task.parentId) || (currentUser?.role === "Senior Employee" && task.assigneeId === currentUser.id)) && <button type="button" onClick={() => openTaskForm(task)} className="rounded-lg border border-indigo-200 px-3 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-50">+ Subtask</button>}
+            {(((["Admin", "Manager"].includes(currentUser?.role ?? "")) && !task.parentId) || (currentUser?.role === "Senior Employee" && task.assigneeId === currentUser.id)) && <button type="button" onClick={() => openTaskForm(task)} className="rounded-lg border border-indigo-200 px-3 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-50">+ Subtask</button>}
             {["Admin", "Manager"].includes(currentUser?.role ?? "") && <button type="button" onClick={() => openEditTask(task)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">Edit / reassign</button>}
             {canArchiveTask(task) && <button onClick={() => archiveTask(task)} className="rounded-lg bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">Archive task</button>}
+            {currentUser?.role === "Admin" && <button onClick={() => deleteTask(task)} className="rounded-lg bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">Remove permanently</button>}
             <details className="text-xs text-slate-500"><summary className="cursor-pointer font-medium">Timeline</summary><div className="mt-2 flex flex-wrap gap-3"><span>Assigned: {formatDateOnly(getAssignedAt(task))}</span><span>Created: {formatTimestamp(task.createdAt)}</span><span>Elapsed: {getTaskDaysFromAssignment(task)}</span><span>Completed: {formatTimestamp(task.completedAt)}</span></div></details>
           </div>
 
@@ -1182,6 +1212,7 @@ export default function Home() {
                   <>
                     <button onClick={() => setModal("user")} className="rounded-lg bg-slate-900 px-4 py-3 text-sm font-semibold text-white">+ New user</button>
                     <button onClick={() => setModal("project")} className="rounded-lg bg-indigo-600 px-4 py-3 text-sm font-semibold text-white hover:bg-indigo-700">+ Create project</button>
+                    <button onClick={() => openTaskForm()} className="rounded-lg bg-indigo-600 px-4 py-3 text-sm font-semibold text-white hover:bg-indigo-700">+ Create task</button>
                   </>
                 )}
                 {currentUser.role === "Manager" && (
@@ -1240,11 +1271,11 @@ export default function Home() {
 
             <div id="projects" hidden={selectedSection !== "dashboard"} className="mt-6 rounded-xl bg-white p-6 shadow-sm">
               <div className="flex items-center justify-between"><div><h3 className="text-xl font-bold">Projects <span className="text-base font-medium text-slate-400">({projects.length})</span></h3><p className="mt-1 text-sm text-slate-500">{currentUser.role === "Admin" ? "Admin controls project creation." : "Projects connected to your tasks."}</p></div>{currentUser.role === "Admin" && <button onClick={() => setModal("project")} className="rounded-lg bg-slate-100 px-4 py-2 text-sm font-semibold text-indigo-600">+ Add project</button>}</div>
-              <div className="mt-5 grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">{projects.map((project) => { const projectTasks = tasks.filter((task) => task.projectId === project.id); const subtaskCount = projectTasks.filter((task) => task.parentId).length; const projectStatus = getProjectStatus(project.id); return <button type="button" key={project.id} onClick={() => openProjectTasks(project.id)} aria-label={`Open tasks for ${project.name}`} className="rounded-lg border border-slate-200 p-4 text-left transition hover:border-indigo-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500"><span className="flex items-start justify-between gap-3"><span className="block break-words font-semibold">{project.name}</span><span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${projectStatusClass(projectStatus)}`}>{projectStatus}</span></span><span className="block mt-2 text-sm text-slate-500">{project.description}</span><span className="block mt-3 text-xs text-indigo-600">{projectTasks.length} tasks · {subtaskCount} subtasks</span></button>; })}</div>
+              <div className="mt-5 grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">{projects.map((project) => { const projectTasks = tasks.filter((task) => task.projectId === project.id); const subtaskCount = projectTasks.filter((task) => task.parentId).length; const projectStatus = getProjectStatus(project.id); return <article key={project.id} className="relative rounded-lg border border-slate-200 p-4 transition hover:border-indigo-400"><button type="button" onClick={() => openProjectTasks(project.id)} aria-label={`Open tasks for ${project.name}`} className="block w-full text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500"><span className="flex items-start justify-between gap-3 pr-8"><span className="block break-words font-semibold">{project.name}</span><span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${projectStatusClass(projectStatus)}`}>{projectStatus}</span></span><span className="mt-2 block text-sm text-slate-500">{project.description}</span><span className="mt-3 block text-xs text-indigo-600">{projectTasks.length} tasks · {subtaskCount} subtasks</span></button>{currentUser.role === "Admin" && <button type="button" onClick={() => deleteProject(project)} aria-label={`Remove project ${project.name}`} className="absolute right-3 top-3 rounded-lg px-2 py-1 text-sm font-bold text-red-600 hover:bg-red-50">×</button>}</article>; })}</div>
             </div>
 
             <div id="tasks" hidden={selectedSection !== "tasks"} className="rounded-xl bg-slate-100 p-6">
-              <div className="flex items-center justify-between"><div><h3 className="text-xl font-bold">{isWorker(currentUser.role) ? "My daily updates" : "Team task board"}</h3><p className="mt-1 text-sm text-slate-500">{currentUser.role === "Manager" ? "Create tasks, subtasks, messages, and assignments for employees." : isWorker(currentUser.role) ? "Update your daily progress and messages. Senior employees can delegate subtasks." : "View all work across the workspace."}</p></div>{currentUser.role === "Manager" && <button onClick={() => openTaskForm()} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">+ New task</button>}</div>
+              <div className="flex items-center justify-between"><div><h3 className="text-xl font-bold">{isWorker(currentUser.role) ? "My daily updates" : "Team task board"}</h3><p className="mt-1 text-sm text-slate-500">{currentUser.role === "Manager" ? "Create tasks, subtasks, messages, and assignments for employees." : currentUser.role === "Admin" ? "Create, edit, assign, archive, or remove work across the workspace." : isWorker(currentUser.role) ? "Update your daily progress and messages. Senior employees can delegate subtasks." : "View all work across the workspace."}</p></div>{["Admin", "Manager"].includes(currentUser.role) && <button onClick={() => openTaskForm()} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">+ New task</button>}</div>
               <SavedFilters key={currentUser.id} userId={currentUser.id} filters={taskFilters} onSelect={setTaskFilters} />
               <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 <label className="text-xs font-semibold text-slate-600">Search tasks<input type="search" value={taskFilters.search} onChange={(event) => setTaskFilter("search", event.target.value)} placeholder="Title or description" className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal" /></label>
