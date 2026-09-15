@@ -713,7 +713,7 @@ export default function Home() {
   };
 
   const restoreTask = async (task: Task) => {
-    if (currentUser?.role !== "Admin") return;
+    if (!canArchiveTask(task)) return;
     try {
       await apiRequest("restore_task", { taskId: task.id });
       await loadWorkspace();
@@ -908,7 +908,7 @@ export default function Home() {
               <p className="mt-1 text-xs font-medium text-amber-700">{task.parentId ? "Archived subtask" : "Archived task"} · {getProjectName(task.projectId)}</p>
               <p className="mt-2 text-sm text-slate-600">{task.description}</p>
             </div>
-            <div className="flex flex-wrap items-center gap-2"><span className="shrink-0 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700">Archived</span>{currentUser?.role === "Admin" && <><button onClick={() => restoreTask(task)} className="rounded-lg bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700">Unarchive</button><button onClick={() => deleteTask(task)} className="rounded-lg bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">Remove permanently</button></>}</div>
+            <div className="flex flex-wrap items-center gap-2"><span className="shrink-0 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700">Archived</span>{canArchiveTask(task) && <button onClick={() => restoreTask(task)} className="rounded-lg bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700">Unarchive</button>}{currentUser?.role === "Admin" && <button onClick={() => deleteTask(task)} className="rounded-lg bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">Remove permanently</button>}</div>
           </div>
           <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
             <span>Assigned to: <strong className="font-semibold text-slate-700">{getUserName(task.assigneeId)}</strong></span>
