@@ -940,12 +940,12 @@ export default function Home() {
   );
 
   if (!hydrated) {
-    return <main className="flex min-h-screen items-center justify-center bg-slate-50 text-slate-500">Loading Task Management...</main>;
+    return <main className="workspace-theme flex min-h-screen items-center justify-center bg-slate-50 text-slate-500">Loading Task Management...</main>;
   }
 
   if (!isSupabaseConfigured) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-slate-950 p-6 text-white">
+      <main className="workspace-theme flex min-h-screen items-center justify-center bg-slate-950 p-6 text-white">
         <div className="w-full max-w-xl rounded-3xl border border-white/10 bg-white p-8 text-slate-900 shadow-2xl">
           <div className="flex items-center gap-3">
             <img src="/mellivo-logo.png" alt="Mellivo logo" className="h-12 w-12 rounded-2xl border border-slate-200 bg-white object-contain p-1" />
@@ -961,7 +961,7 @@ export default function Home() {
 
   if (!currentUser) {
     return (
-      <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-slate-950 p-4 sm:p-8">
+      <main className="workspace-theme relative flex min-h-screen items-center justify-center overflow-hidden bg-slate-950 p-4 sm:p-8">
         <div className="pointer-events-none absolute -right-24 -top-24 h-96 w-96 rounded-full bg-indigo-500/20 blur-3xl" />
         <div className="pointer-events-none absolute -bottom-32 -left-24 h-96 w-96 rounded-full bg-cyan-400/10 blur-3xl" />
         <div className="relative grid w-full max-w-5xl overflow-hidden rounded-3xl border border-white/10 bg-white shadow-2xl shadow-indigo-950/30 lg:grid-cols-[0.9fr_1.1fr]">
