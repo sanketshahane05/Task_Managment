@@ -1,19 +1,19 @@
 "use client";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 
-export default function TaskDetailsPanel({ children, onClose }: { children: ReactNode; onClose: () => void }) {
-  const dialog = useRef<HTMLDialogElement>(null);
+export default function TaskDetailsPanel({ children, onClose, inactive = false }: { children: ReactNode; onClose: () => void; inactive?: boolean }) {
   useEffect(() => {
-    const element = dialog.current;
     const previousOverflow = document.body.style.overflow;
-    element?.showModal();
     document.body.style.overflow = "hidden";
-    return () => { element?.close(); document.body.style.overflow = previousOverflow; };
-  }, []);
-  return <dialog ref={dialog} aria-labelledby="task-details-heading" onCancel={(event) => { event.preventDefault(); onClose(); }} onClick={(event) => { if (event.target === event.currentTarget) onClose(); }} className="fixed inset-y-0 left-auto right-0 m-0 h-dvh max-h-none w-full max-w-none border-0 bg-white p-0 text-slate-900 shadow-2xl backdrop:bg-black/40 sm:w-[min(760px,90vw)]">
-    <div className="flex h-full flex-col">
+    const handleKey = (event: KeyboardEvent) => { if (!inactive && event.key === "Escape") onClose(); };
+    window.addEventListener("keydown", handleKey);
+    return () => { document.body.style.overflow = previousOverflow; window.removeEventListener("keydown", handleKey); };
+  }, [inactive, onClose]);
+  return <div role="dialog" aria-modal="true" aria-labelledby="task-details-heading" aria-hidden={inactive || undefined} className={`fixed inset-0 z-30 bg-black/40 ${inactive ? "pointer-events-none" : ""}`} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <div className="ml-auto flex h-dvh w-full flex-col bg-white text-slate-900 shadow-2xl sm:w-[min(760px,90vw)]">
       <header className="flex shrink-0 items-center justify-between border-b border-slate-200 px-5 py-4"><h2 id="task-details-heading" className="font-bold">Task details</h2><button autoFocus type="button" aria-label="Close task details" onClick={onClose} className="rounded-lg px-3 py-1 text-xl text-slate-500 hover:bg-slate-100">×</button></header>
       <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">{children}</div>
     </div>
-  </dialog>;
+  </div>;
 }
+
