@@ -20,8 +20,8 @@ begin
   end if;
   if tg_op = 'INSERT' or new.assignee_ids is distinct from old.assignee_ids then
     if exists (
-      select 1 from unnest(new.assignee_ids) id
-      left join public.profiles profile on profile.id = id
+      select 1 from unnest(new.assignee_ids) assignee(id)
+      left join public.profiles profile on profile.id = assignee.id
       where profile.id is null or not profile.active or profile.role not in ('Senior Employee','Employee')
     ) then raise exception 'Choose only active employees' using errcode = '23514'; end if;
   end if;
@@ -60,7 +60,7 @@ returns boolean language sql stable security definer set search_path = public as
     and exists (select 1 from public.tasks where id = parent_task_id and project_id = target_project_id and archived_at is null)
     and cardinality(target_assignee_ids) > 0
     and not exists (
-      select 1 from unnest(target_assignee_ids) id left join public.profiles profile on profile.id=id
+      select 1 from unnest(target_assignee_ids) assignee(id) left join public.profiles profile on profile.id=assignee.id
       where profile.id is null or not profile.active or profile.role <> 'Employee'
     );
 $$;
