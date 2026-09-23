@@ -71,13 +71,13 @@ function fail(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
 }
 
-async function removeTaskAttachments(admin: ReturnType<typeof createSupabaseAdminClient>, taskIds: string[]) {
+async function removeTaskAttachments(client: Awaited<ReturnType<typeof createSupabaseServerClient>>, taskIds: string[]) {
   for (const taskId of taskIds) {
     while (true) {
-      const { data, error } = await admin.storage.from("task-attachments").list(taskId, { limit: 100, offset: 0 });
+      const { data, error } = await client.storage.from("task-attachments").list(taskId, { limit: 100, offset: 0 });
       if (error || !data?.length) break;
       const paths = data.map(file => `${taskId}/${file.name}`);
-      const { error: removeError } = await admin.storage.from("task-attachments").remove(paths);
+      const { error: removeError } = await client.storage.from("task-attachments").remove(paths);
       if (removeError || data.length < 100) break;
     }
   }
@@ -189,7 +189,7 @@ export async function POST(request: Request) {
       if (taskLookupError) return fail(taskLookupError.message, 500);
       const { data: activeProjectTask } = await context.client.from("tasks").select("id").eq("project_id", input.projectId).is("archived_at", null).limit(1).maybeSingle();
       if (activeProjectTask) return fail("Archive the project before removing it.");
-      if (process.env.SUPABASE_SERVICE_ROLE_KEY) await removeTaskAttachments(createSupabaseAdminClient(), (projectTasks ?? []).map(task => task.id));
+      await removeTaskAttachments(context.client, (projectTasks ?? []).map(task => task.id));
       const { data, error } = await context.client.from("projects").delete().eq("id", input.projectId).select("id").single();
       if (error || !data) return fail(error?.message ?? "Project not found.", error?.code === "PGRST116" ? 404 : 400);
       return NextResponse.json({ ok: true });
@@ -208,8 +208,7 @@ export async function POST(request: Request) {
 
     if (input.action === "restore_project") {
       if (context.profile.role !== "Admin") return fail("Only admins can restore projects.", 403);
-      if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return fail("The server service key is required to restore projects.", 503);
-      const { data, error } = await createSupabaseAdminClient().from("tasks").update({ archived_at: null }).eq("project_id", input.projectId).not("archived_at", "is", null).select("id");
+      const { data, error } = await context.client.from("tasks").update({ archived_at: null }).eq("project_id", input.projectId).not("archived_at", "is", null).select("id");
       if (error) return fail(error.message);
       if (!data?.length) return fail("Archived project not found.", 404);
       return NextResponse.json({ ok: true });
@@ -217,7 +216,6 @@ export async function POST(request: Request) {
 
     if (input.action === "create_task") {
       if (!["Admin", "Manager", "Senior Employee"].includes(context.profile.role)) return fail("You cannot create tasks.", 403);
-      if (context.profile.role === "Admin" && !process.env.SUPABASE_SERVICE_ROLE_KEY) return fail("The server service key is required for admins to create tasks.", 503);
       const assigneeIds = [...new Set(input.assigneeIds)];
       const { data: assignees } = await context.client.from("profiles").select("id, role, active").in("id", assigneeIds);
       if (assignees?.length !== assigneeIds.length || assignees.some((assignee) => !assignee.active || !["Senior Employee", "Employee"].includes(assignee.role))) return fail("Choose only active employees.");
@@ -232,7 +230,7 @@ export async function POST(request: Request) {
         if (!blocker || blocker.archived_at || blocker.project_id !== input.projectId) return fail("Choose an active dependency in the same project.");
       }
       if (input.dueDate < input.startDate) return fail("Due date must be on or after the start date.");
-      const taskClient = context.profile.role === "Admin" ? createSupabaseAdminClient() : context.client;
+      const taskClient = context.client;
       const planningFields = input.blockedById || input.milestone || input.recurrence !== "none" ? { blocked_by_id: input.blockedById || null, milestone: input.milestone, milestone_date: input.milestone ? input.milestoneDate || input.dueDate : null, recurrence: input.recurrence } : {};
       const { error } = await taskClient.from("tasks").insert({ id: `task-${crypto.randomUUID()}`, title: input.title, description: input.description || "No description yet.", project_id: input.projectId, assignee_id: assigneeIds[0], assignee_ids: assigneeIds, created_by_id: context.user.id, parent_id: input.parentId || null, ...planningFields, priority: input.priority, due: input.dueDate, due_date: input.dueDate, start_date: input.startDate, status: "Not started", progress: 0 });
       if (error) return fail(error.code === "PGRST204" ? "Multiple assignees need the latest database migration applied." : error.message);
@@ -252,10 +250,8 @@ export async function POST(request: Request) {
       for (let index = 0; index < removeIds.length; index += 1) {
         rows.filter(row => row.parent_id === removeIds[index]).forEach(child => removeIds.push(child.id));
       }
-      if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return fail("The server service key is required to remove tasks.", 503);
-      const admin = createSupabaseAdminClient();
-      await removeTaskAttachments(admin, removeIds);
-      const { error } = await admin.from("tasks").delete().in("id", removeIds);
+      await removeTaskAttachments(context.client, removeIds);
+      const { error } = await context.client.from("tasks").delete().in("id", removeIds);
       if (error) return fail(error.message);
       return NextResponse.json({ ok: true, removedTaskIds: removeIds });
     }
