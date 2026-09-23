@@ -138,6 +138,8 @@ export default function Home() {
   const [notice, setNotice] = useState("");
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
+  const [pendingRequestCount, setPendingRequestCount] = useState(0);
+  const inFlightRequests = useRef(new Map<string, Promise<Record<string, unknown>>>());
 
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
@@ -198,14 +200,30 @@ export default function Home() {
   }, [chatOpen, noteTaskId, notes.length]);
 
   const apiRequest = async (action: string, payload: Record<string, unknown> = {}) => {
-    const response = await fetch("/api/workspace", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, ...payload }),
-    });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(result.error ?? "The request could not be completed.");
-    return result;
+    const requestBody = { action, ...payload };
+    const requestKey = JSON.stringify(requestBody);
+    const existingRequest = inFlightRequests.current.get(requestKey);
+    if (existingRequest) return existingRequest;
+
+    const request = (async () => {
+      const response = await fetch("/api/workspace", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error ?? "The request could not be completed.");
+      return result as Record<string, unknown>;
+    })();
+
+    inFlightRequests.current.set(requestKey, request);
+    setPendingRequestCount(inFlightRequests.current.size);
+    try {
+      return await request;
+    } finally {
+      inFlightRequests.current.delete(requestKey);
+      setPendingRequestCount(inFlightRequests.current.size);
+    }
   };
 
   const loadWorkspace = useCallback(async () => {
@@ -1169,7 +1187,8 @@ export default function Home() {
     ? activeSection : "dashboard";
 
   return (
-    <main className="workspace-theme min-h-screen bg-background text-slate-900">
+    <main className="workspace-theme min-h-screen bg-background text-slate-900" aria-busy={pendingRequestCount > 0} inert={pendingRequestCount > 0}>
+      {pendingRequestCount > 0 && <div className="fixed inset-0 z-[100] flex cursor-wait items-start justify-center bg-slate-950/20 pt-5 backdrop-blur-[1px]" role="status" aria-live="assertive"><div className="flex items-center gap-3 rounded-full border border-amber-300 bg-white px-5 py-3 font-semibold text-slate-800 shadow-xl"><span className="h-5 w-5 animate-spin rounded-full border-2 border-amber-500 border-t-transparent" aria-hidden="true" />Saving changes…</div></div>}
         <div className="flex min-h-screen flex-col xl:flex-row">
         <aside className="sticky top-0 hidden h-screen w-64 shrink-0 overflow-y-auto border-r border-slate-200/80 bg-white/90 p-4 backdrop-blur xl:block">
           <div className="flex items-center gap-3">
