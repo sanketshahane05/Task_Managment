@@ -15,6 +15,10 @@ test('senior reviews own delegated subtasks but cannot review own assigned work'
   const tasks=[{...task,reviewState:'pending'},{...task,id:'self',assigneeId:'senior',reviewState:'pending'},{...task,id:'other',createdById:'other',reviewState:'pending'}];
   assert.deepEqual(buildNotifications(tasks,[],{id:'senior',role:'Senior Employee'},now).filter(a=>a.kind==='Reviews').map(a=>a.taskId),['t']);
 });
+test('every assigned employee receives task notifications', () => {
+  const shared={...task,assigneeId:'employee',assigneeIds:['employee','coworker']};
+  assert.ok(buildNotifications([shared],[],{id:'coworker',role:'Employee'},now).some(item=>item.taskId==='t'));
+});
 test('read messages, own messages and inaccessible tasks never generate message alerts', () => {
   const notes=[{taskId:'t',authorId:'other',createdAt:now.toISOString(),readBy:['employee']},{taskId:'t',authorId:'employee',createdAt:now.toISOString()},{taskId:'hidden',authorId:'other',createdAt:now.toISOString()}];
   assert.equal(buildNotifications([task],notes,worker,now).filter(a=>a.kind==='Messages').length,0);
@@ -29,3 +33,4 @@ test('completed and archived tasks stop work alerts; completed tasks retain unre
 test('assignments older than seven days and future dates are excluded', () => {
   assert.equal(buildNotifications([{...task,dueDate:undefined,assignedAt:'2026-08-01T00:00:00Z'},{...task,id:'future',dueDate:undefined,assignedAt:'2027-01-01T00:00:00Z'}],[],worker,now).length,0);
 });
+

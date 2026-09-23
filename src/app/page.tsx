@@ -43,6 +43,7 @@ type Task = {
   status: TaskStatus;
   progress: number;
   assigneeId: string;
+  assigneeIds: string[];
   createdById: string;
   parentId: string | null;
   blockedById?: string | null;
@@ -157,7 +158,7 @@ export default function Home() {
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [newTaskDescription, setNewTaskDescription] = useState("");
   const [newTaskProjectId, setNewTaskProjectId] = useState("");
-  const [newTaskAssigneeId, setNewTaskAssigneeId] = useState("");
+  const [newTaskAssigneeIds, setNewTaskAssigneeIds] = useState<string[]>([]);
   const [newTaskStart, setNewTaskStart] = useState(localDateInput);
   const [newTaskDue, setNewTaskDue] = useState(localDateInput);
   const [newTaskPriority, setNewTaskPriority] = useState<Task["priority"]>(
@@ -295,12 +296,14 @@ export default function Home() {
 
   const currentUser = users.find((user) => user.id === currentUserId) ?? null;
   const employees = users.filter((user) => user.active && (currentUser?.role === "Senior Employee" ? user.role === "Employee" : isWorker(user.role)));
+  const getTaskAssigneeIds = (task: Task) => task.assigneeIds?.length ? task.assigneeIds : [task.assigneeId];
+  const isTaskAssignee = (task: Task, userId?: string | null) => Boolean(userId && getTaskAssigneeIds(task).includes(userId));
   const visibleTasks = useMemo(() => {
     if (!currentUser || !isWorker(currentUser.role)) return tasks;
 
     const visibleIds = new Set(
       tasks
-        .filter((task) => task.assigneeId === currentUser.id || (currentUser.role === "Senior Employee" && task.createdById === currentUser.id))
+        .filter((task) => (task.assigneeIds?.length ? task.assigneeIds : [task.assigneeId]).includes(currentUser.id) || (currentUser.role === "Senior Employee" && task.createdById === currentUser.id))
         .map((task) => task.id),
     );
 
@@ -325,6 +328,7 @@ export default function Home() {
 
   const getUserName = (id: string) =>
     users.find((user) => user.id === id)?.name ?? "Unassigned";
+  const getTaskAssigneeNames = (task: Task) => getTaskAssigneeIds(task).map(getUserName).join(", ");
   const getProjectName = (id: string) =>
     [...projects, ...archivedProjects].find((project) => project.id === id)?.name ?? "Unknown project";
   const getProjectStatus = (projectId: string): TaskStatus => {
@@ -570,8 +574,10 @@ export default function Home() {
     setNewTaskMilestone(false);
     setNewTaskMilestoneDate(parent?.dueDate ?? today);
     setNewTaskRecurrence("none");
-    setNewTaskProjectId(parent?.projectId ?? projects[0]?.id ?? "");
-    setNewTaskAssigneeId(parent && employees.some((user) => user.id === parent.assigneeId) ? parent.assigneeId : employees[0]?.id ?? "");
+    setNewTaskProjectId(parent?.projectId ?? taskFilters.project ?? projects[0]?.id ?? "");
+    const eligibleIds = new Set(employees.map((user) => user.id));
+    const inheritedAssignees = parent ? getTaskAssigneeIds(parent).filter((id) => eligibleIds.has(id)) : [];
+    setNewTaskAssigneeIds(inheritedAssignees.length ? inheritedAssignees : employees[0]?.id ? [employees[0].id] : []);
     setNewTaskPriority(parent?.priority ?? "Medium");
     setNewTaskStart(today);
     setNewTaskDue(parent?.dueDate && parent.dueDate >= today ? parent.dueDate : today);
@@ -589,7 +595,7 @@ export default function Home() {
     setNewTaskMilestoneDate(task.milestoneDate ?? task.dueDate ?? localDateInput());
     setNewTaskRecurrence(task.recurrence ?? "none");
     setNewTaskProjectId(task.projectId);
-    setNewTaskAssigneeId(task.assigneeId);
+    setNewTaskAssigneeIds(getTaskAssigneeIds(task));
     setNewTaskPriority(task.priority);
     setNewTaskStart(task.startDate ?? task.assignedAt?.slice(0, 10) ?? localDateInput());
     setNewTaskDue(task.dueDate ?? localDateInput());
@@ -602,8 +608,8 @@ export default function Home() {
     setTaskFormError("");
 
     const projectId = newTaskProjectId || projects[0]?.id;
-    const assigneeId = newTaskAssigneeId || employees[0]?.id;
-    if (!projectId || !assigneeId) {
+    const assigneeIds = newTaskAssigneeIds.length ? newTaskAssigneeIds : employees[0]?.id ? [employees[0].id] : [];
+    if (!projectId || !assigneeIds.length) {
       setTaskFormError("Create an employee and project before adding a task.");
       return;
     }
@@ -615,11 +621,11 @@ export default function Home() {
 
     const parentTask = tasks.find((task) => task.id === newTaskParentId);
     const parentId = parentTask?.projectId === projectId ? parentTask.id : null;
-    if (currentUser.role === "Senior Employee" && (!parentTask || parentTask.assigneeId !== currentUser.id || !parentId)) { setNotice("Select one of your assigned tasks as the parent."); return; }
+    if (currentUser.role === "Senior Employee" && (!parentTask || !isTaskAssignee(parentTask, currentUser.id) || !parentId)) { setNotice("Select one of your assigned tasks as the parent."); return; }
 
     setSavingTask(true);
     try {
-      await apiRequest(editingTaskId ? "edit_task" : "create_task", { ...(editingTaskId ? { taskId: editingTaskId } : {}), title: newTaskTitle, description: newTaskDescription, projectId, assigneeId, parentId, blockedById: newTaskBlockedById || null, milestone: newTaskMilestone, milestoneDate: newTaskMilestone ? newTaskMilestoneDate : null, recurrence: newTaskRecurrence, priority: newTaskPriority, dueDate: newTaskDue, startDate: newTaskStart });
+      await apiRequest(editingTaskId ? "edit_task" : "create_task", { ...(editingTaskId ? { taskId: editingTaskId } : {}), title: newTaskTitle, description: newTaskDescription, projectId, assigneeIds, parentId, blockedById: newTaskBlockedById || null, milestone: newTaskMilestone, milestoneDate: newTaskMilestone ? newTaskMilestoneDate : null, recurrence: newTaskRecurrence, priority: newTaskPriority, dueDate: newTaskDue, startDate: newTaskStart });
       await loadWorkspace();
       setNewTaskTitle("");
       setNewTaskDescription("");
@@ -638,7 +644,7 @@ export default function Home() {
   const addNote = async (taskId: string) => {
     const task = tasks.find((item) => item.id === taskId);
     const canAddNote = currentUser?.role === "Manager" ||
-      (isWorker(currentUser?.role) && task?.assigneeId === currentUser?.id) || (currentUser?.role === "Senior Employee" && task?.createdById === currentUser.id);
+      (isWorker(currentUser?.role) && Boolean(task && isTaskAssignee(task, currentUser?.id))) || (currentUser?.role === "Senior Employee" && task?.createdById === currentUser.id);
     if (!currentUser || !canAddNote || !noteText.trim() || sendingMessage) return;
     setSendingMessage(true);
     setChatError("");
@@ -789,11 +795,11 @@ export default function Home() {
 
   const renderTask = (task: Task, depth = 0, detailed = false): React.ReactNode => {
     const children = sortTasksNewestFirst(boardTasks.filter((child) => child.parentId === task.id));
-    const canEditTask = isWorker(currentUser?.role) && task.assigneeId === currentUser?.id;
-    const canReview = currentUser && (["Admin", "Manager"].includes(currentUser.role) || (currentUser.role === "Senior Employee" && task.createdById === currentUser.id && task.assigneeId !== currentUser.id));
+    const canEditTask = isWorker(currentUser?.role) && isTaskAssignee(task, currentUser?.id);
+    const canReview = currentUser && (["Admin", "Manager"].includes(currentUser.role) || (currentUser.role === "Senior Employee" && task.createdById === currentUser.id && !isTaskAssignee(task, currentUser.id)));
     const edit = canEditTask ? getEmployeeEdit(task) : null;
     const taskNotes = notes.filter((note) => note.taskId === task.id);
-    const canAddSubtask = (["Admin", "Manager"].includes(currentUser?.role ?? "") && !task.parentId) || (currentUser?.role === "Senior Employee" && task.assigneeId === currentUser.id);
+    const canAddSubtask = (["Admin", "Manager"].includes(currentUser?.role ?? "") && !task.parentId) || (currentUser?.role === "Senior Employee" && isTaskAssignee(task, currentUser.id));
     const canManage = ["Admin", "Manager"].includes(currentUser?.role ?? "");
     const unreadCount = taskNotes.filter(isNewMessage).length;
     const blocker = task.blockedById ? tasks.find(item => item.id === task.blockedById) : null;
@@ -807,7 +813,7 @@ export default function Home() {
             {(canAddSubtask || canManage || canArchiveTask(task)) && <details className="relative shrink-0" onClick={(event) => { if ((event.target as HTMLElement).closest("button")) event.currentTarget.open = false; }}><summary aria-label={"Actions for " + task.title} className="cursor-pointer list-none rounded-lg px-3 py-1 text-lg font-bold text-slate-500 hover:bg-slate-100">⋯</summary><div className="absolute right-0 z-10 mt-1 w-44 rounded-xl border border-slate-200 bg-white p-1 shadow-lg">{canAddSubtask && <button onClick={() => openTaskForm(task)} className="block w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100">Add subtask</button>}{canManage && <button onClick={() => openEditTask(task)} className="block w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100">Edit / reassign</button>}{canArchiveTask(task) && <button onClick={() => archiveTask(task)} className="block w-full rounded-lg px-3 py-2 text-left text-sm text-amber-700 hover:bg-slate-100">Archive</button>}</div></details>}
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs"><span className="rounded-full bg-indigo-50 px-2 py-1 font-semibold text-indigo-700">{task.status}</span><span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">{task.priority}</span>{task.milestone && <button onClick={openDetails} className="rounded-full bg-amber-50 px-2 py-1 font-semibold text-amber-700">Milestone</button>}{task.recurrence && task.recurrence !== "none" && <button onClick={openDetails} className="rounded-full bg-sky-50 px-2 py-1 font-semibold text-sky-700">↻ {task.recurrence}</button>}{isBlocked && <button onClick={openDetails} className="rounded-full bg-orange-50 px-2 py-1 font-semibold text-orange-700">Blocked</button>}{task.reviewState && task.reviewState !== "none" && <button onClick={openDetails} className="rounded-full bg-amber-50 px-2 py-1 font-semibold text-amber-700">{task.reviewState === "pending" ? "Awaiting review" : task.reviewState === "changes_requested" ? "Changes requested" : "Approved"}</button>}</div>
-          <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-slate-500"><span>{getUserName(task.assigneeId)}</span><span>Due {task.dueDate ? formatDateOnly(task.dueDate) : task.due}</span><span className="flex items-center gap-2"><span className="h-1.5 w-20 overflow-hidden rounded-full bg-slate-100"><span className="block h-full rounded-full bg-indigo-600" style={{width: task.progress + "%"}} /></span><span className="font-semibold text-indigo-600">{task.progress}%</span></span></div>
+          <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-slate-500"><span>{getTaskAssigneeNames(task)}</span><span>Due {task.dueDate ? formatDateOnly(task.dueDate) : task.due}</span><span className="flex items-center gap-2"><span className="h-1.5 w-20 overflow-hidden rounded-full bg-slate-100"><span className="block h-full rounded-full bg-indigo-600" style={{width: task.progress + "%"}} /></span><span className="font-semibold text-indigo-600">{task.progress}%</span></span></div>
           <div className="mt-3 flex flex-wrap items-center gap-4 text-xs font-semibold text-indigo-600"><button onClick={openDetails}>View details</button>{children.length > 0 && <button aria-expanded={Boolean(expandedTasks[task.id])} onClick={() => setExpandedTasks((current) => ({...current,[task.id]: !current[task.id]}))}>{expandedTasks[task.id] ? "▾" : "▸"} {children.length} subtasks</button>}<button onClick={() => toggleMessages(task.id)}>{unreadCount ? unreadCount + " unread messages" : "Chat · " + taskNotes.length}</button></div>
         </article>
         {children.length > 0 && expandedTasks[task.id] && <div className="mt-3 space-y-3">{children.map((child) => renderTask(child, depth + 1))}</div>}
@@ -840,7 +846,7 @@ export default function Home() {
                 <span>Project: {getProjectName(task.projectId)}</span>
                 <span>Start: {task.startDate ? formatDateOnly(task.startDate) : formatDateOnly(task.assignedAt)}</span>
                 <span>Due: {task.dueDate ? formatDateOnly(task.dueDate) : task.due}</span>
-                <span>Assigned to: <strong className="font-semibold text-slate-600">{getUserName(task.assigneeId)}</strong></span>
+                <span>Assigned to: <strong className="font-semibold text-slate-600">{getTaskAssigneeNames(task)}</strong></span>
                 <span>Assigned by: <strong className="font-semibold text-slate-600">{getUserName(task.createdById)}</strong></span>
                 {blocker && <span>Depends on: <button onClick={() => setSelectedTaskId(blocker.id)} className="font-semibold text-indigo-600 hover:underline">{blocker.title}</button>{blocker.status === "Completed" ? " · Complete" : " · Blocking"}</span>}
               </div>
@@ -860,7 +866,7 @@ export default function Home() {
             <button onClick={() => toggleMessages(task.id)} className={taskNotes.some(isNewMessage) ? "rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white" : "rounded-lg bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-700"}>
               {taskNotes.some(isNewMessage) ? "New messages" : "Open chat"} · {taskNotes.length}
             </button>
-            {(((["Admin", "Manager"].includes(currentUser?.role ?? "")) && !task.parentId) || (currentUser?.role === "Senior Employee" && task.assigneeId === currentUser.id)) && <button type="button" onClick={() => openTaskForm(task)} className="rounded-lg border border-indigo-200 px-3 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-50">+ Subtask</button>}
+            {(((["Admin", "Manager"].includes(currentUser?.role ?? "")) && !task.parentId) || (currentUser?.role === "Senior Employee" && isTaskAssignee(task, currentUser.id))) && <button type="button" onClick={() => openTaskForm(task)} className="rounded-lg border border-indigo-200 px-3 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-50">+ Subtask</button>}
             {["Admin", "Manager"].includes(currentUser?.role ?? "") && <button type="button" onClick={() => openEditTask(task)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">Edit / reassign</button>}
             {canArchiveTask(task) && <button onClick={() => archiveTask(task)} className="rounded-lg bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">Archive task</button>}
             <details className="text-xs text-slate-500"><summary className="cursor-pointer font-medium">Timeline</summary><div className="mt-2 flex flex-wrap gap-3"><span>Assigned: {formatDateOnly(getAssignedAt(task))}</span><span>Created: {formatTimestamp(task.createdAt)}</span><span>Elapsed: {getTaskDaysFromAssignment(task)}</span><span>Completed: {formatTimestamp(task.completedAt)}</span></div></details>
@@ -935,7 +941,7 @@ export default function Home() {
             <div className="flex flex-wrap items-center gap-2"><span className="shrink-0 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700">Archived</span>{canArchiveTask(task) && <button onClick={() => restoreTask(task)} className="rounded-lg bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700">Unarchive</button>}{currentUser?.role === "Admin" && <button onClick={() => deleteTask(task)} className="rounded-lg bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">Remove permanently</button>}</div>
           </div>
           <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
-            <span>Assigned to: <strong className="font-semibold text-slate-700">{getUserName(task.assigneeId)}</strong></span>
+            <span>Assigned to: <strong className="font-semibold text-slate-700">{getTaskAssigneeNames(task)}</strong></span>
             <span>Created: {formatTimestamp(task.createdAt)}</span>
             <span>Archived: {formatTimestamp(task.archivedAt)}</span>
           </div>
@@ -955,7 +961,7 @@ export default function Home() {
     .forEach((task) => appendArchivedTaskRows(task, 0));
   const archiveSearch = archiveFilters.search.trim().toLowerCase();
   const filteredArchivedProjects = archivedProjects.filter(project => (!archiveSearch || `${project.name} ${project.description}`.toLowerCase().includes(archiveSearch)) && (!archiveFilters.project || project.id === archiveFilters.project) && (!archiveFilters.type || archiveFilters.type === "project"));
-  const filteredArchivedTaskRows = archivedTaskRows.filter(({ task }) => (!archiveSearch || `${task.title} ${task.description}`.toLowerCase().includes(archiveSearch)) && (!archiveFilters.project || task.projectId === archiveFilters.project) && (!archiveFilters.assignee || task.assigneeId === archiveFilters.assignee) && (!archiveFilters.type || archiveFilters.type === (task.parentId ? "subtask" : "task")));
+  const filteredArchivedTaskRows = archivedTaskRows.filter(({ task }) => (!archiveSearch || `${task.title} ${task.description}`.toLowerCase().includes(archiveSearch)) && (!archiveFilters.project || task.projectId === archiveFilters.project) && (!archiveFilters.assignee || isTaskAssignee(task, archiveFilters.assignee)) && (!archiveFilters.type || archiveFilters.type === (task.parentId ? "subtask" : "task")));
   const archivePageCount = Math.max(1, Math.ceil(filteredArchivedTaskRows.length / archivePageSize));
   const safeArchivePage = Math.min(archivePage, archivePageCount);
   const archivePageRows = filteredArchivedTaskRows.slice(
@@ -1058,7 +1064,7 @@ export default function Home() {
       && (!taskFilters.project || task.projectId === taskFilters.project)
       && (!taskFilters.status || task.status === taskFilters.status)
       && (!taskFilters.priority || task.priority === taskFilters.priority)
-      && (!taskFilters.assignee || task.assigneeId === taskFilters.assignee)
+      && (!taskFilters.assignee || isTaskAssignee(task, taskFilters.assignee))
       && (!taskFilters.due
         || (taskFilters.due === "overdue" && Boolean(task.dueDate) && task.dueDate! < todayKey && task.status !== "Completed")
         || (taskFilters.due === "today" && task.dueDate === todayKey)
@@ -1138,7 +1144,7 @@ export default function Home() {
   const chatTask = visibleTasks.find((task) => task.id === noteTaskId);
   const chatTasks = visibleTasks.filter((task) => !chatProjectId || task.projectId === chatProjectId);
   const chatNotes = notes.filter((note) => note.taskId === chatTask?.id).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-  const canSendChat = Boolean(chatTask && (currentUser.role === "Manager" || (isWorker(currentUser.role) && chatTask.assigneeId === currentUser.id) || (currentUser.role === "Senior Employee" && chatTask.createdById === currentUser.id)));
+  const canSendChat = Boolean(chatTask && (["Admin", "Manager"].includes(currentUser.role) || (isWorker(currentUser.role) && isTaskAssignee(chatTask, currentUser.id)) || (currentUser.role === "Senior Employee" && chatTask.createdById === currentUser.id)));
   const notifications = buildNotifications(visibleTasks, notes, currentUser, new Date(now));
   const workloadUsers = users.filter(user => user.active && user.id !== currentUser.id && (
     currentUser.role === "Admin"
@@ -1302,7 +1308,7 @@ export default function Home() {
                   ["project", "Project", projects.map((project) => [project.id, project.name])],
                   ["status", "Status", ["Not started", "In progress", "Completed"].map((value) => [value, value])],
                   ["priority", "Priority", ["High", "Medium", "Low"].map((value) => [value, value])],
-                  ["assignee", "Assignee", users.filter((user) => visibleTasks.some((task) => task.assigneeId === user.id)).map((user) => [user.id, user.name])],
+                  ["assignee", "Assignee", users.filter((user) => visibleTasks.some((task) => isTaskAssignee(task, user.id))).map((user) => [user.id, user.name])],
                   ["due", "Due date", [["overdue", "Overdue"], ["today", "Due today"], ["upcoming", "Upcoming"], ["none", "No due date"]]],
                 ] as const).map(([key, label, options]) => (
                   <label key={key} className="text-xs font-semibold text-slate-600">{label}<select value={taskFilters[key]} onChange={(event) => setTaskFilter(key, event.target.value)} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal"><option value="">All</option>{options.map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></label>
@@ -1339,7 +1345,7 @@ export default function Home() {
                   {archiveCollapsed ? "Maximize" : "Minimize"}
                 </button>
               </div>
-              {!archiveCollapsed && <div className="mt-5 grid gap-3 rounded-xl bg-slate-50 p-4 sm:grid-cols-2 xl:grid-cols-5"><label className="text-xs font-semibold text-slate-600 xl:col-span-2">Search archive<input type="search" value={archiveFilters.search} onChange={event => { setArchiveFilters(current => ({ ...current, search: event.target.value })); setArchivePage(1); }} placeholder="Title or description" className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal" /></label><label className="text-xs font-semibold text-slate-600">Project<select value={archiveFilters.project} onChange={event => { setArchiveFilters(current => ({ ...current, project: event.target.value })); setArchivePage(1); }} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal"><option value="">All projects</option>{[...projects, ...archivedProjects].map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label><label className="text-xs font-semibold text-slate-600">Type<select value={archiveFilters.type} onChange={event => { setArchiveFilters(current => ({ ...current, type: event.target.value })); setArchivePage(1); }} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal"><option value="">All types</option><option value="project">Projects</option><option value="task">Tasks</option><option value="subtask">Subtasks</option></select></label><label className="text-xs font-semibold text-slate-600">Assignee<select value={archiveFilters.assignee} onChange={event => { setArchiveFilters(current => ({ ...current, assignee: event.target.value })); setArchivePage(1); }} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal"><option value="">All assignees</option>{users.filter(user => archivedTasks.some(task => task.assigneeId === user.id)).map(user => <option key={user.id} value={user.id}>{user.name}</option>)}</select></label></div>}
+              {!archiveCollapsed && <div className="mt-5 grid gap-3 rounded-xl bg-slate-50 p-4 sm:grid-cols-2 xl:grid-cols-5"><label className="text-xs font-semibold text-slate-600 xl:col-span-2">Search archive<input type="search" value={archiveFilters.search} onChange={event => { setArchiveFilters(current => ({ ...current, search: event.target.value })); setArchivePage(1); }} placeholder="Title or description" className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal" /></label><label className="text-xs font-semibold text-slate-600">Project<select value={archiveFilters.project} onChange={event => { setArchiveFilters(current => ({ ...current, project: event.target.value })); setArchivePage(1); }} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal"><option value="">All projects</option>{[...projects, ...archivedProjects].map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label><label className="text-xs font-semibold text-slate-600">Type<select value={archiveFilters.type} onChange={event => { setArchiveFilters(current => ({ ...current, type: event.target.value })); setArchivePage(1); }} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal"><option value="">All types</option><option value="project">Projects</option><option value="task">Tasks</option><option value="subtask">Subtasks</option></select></label><label className="text-xs font-semibold text-slate-600">Assignee<select value={archiveFilters.assignee} onChange={event => { setArchiveFilters(current => ({ ...current, assignee: event.target.value })); setArchivePage(1); }} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal"><option value="">All assignees</option>{users.filter(user => archivedTasks.some(task => isTaskAssignee(task, user.id))).map(user => <option key={user.id} value={user.id}>{user.name}</option>)}</select></label></div>}
               {!archiveCollapsed && filteredArchivedProjects.length > 0 && <div className="mt-5 grid gap-3 sm:grid-cols-2">{filteredArchivedProjects.map(project => <article key={project.id} className="rounded-xl border border-amber-200 bg-amber-50/50 p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold">{project.name}</p><p className="mt-1 text-xs text-amber-700">Archived project</p><p className="mt-2 text-sm text-slate-600">{project.description}</p></div>{currentUser.role === "Admin" && <div className="flex flex-col gap-2"><button onClick={() => restoreProject(project)} className="rounded-lg bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700">Unarchive</button><button onClick={() => deleteProject(project)} className="rounded-lg bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">Remove permanently</button></div>}</div></article>)}</div>}
               {!archiveCollapsed && (filteredArchivedTaskRows.length > 0 ? (
                 <>
@@ -1484,7 +1490,7 @@ export default function Home() {
         </section>
       </div>
 
-      {selectedTaskId && visibleTasks.some((task) => task.id === selectedTaskId) && <TaskDetailsPanel inactive={chatOpen || modal === "task" || Boolean(confirmRequest)} onClose={() => setSelectedTaskId(null)}>{notice && <p role="status" className="mb-4 rounded-lg bg-indigo-50 p-3 text-sm text-indigo-700">{notice}</p>}{renderTask(visibleTasks.find((task) => task.id === selectedTaskId)!, 0, true)}<TaskAttachments key={`files-${selectedTaskId}`} taskId={selectedTaskId} canUpload={Boolean(visibleTasks.find(task=>task.id===selectedTaskId && !task.archivedAt && (["Admin","Manager"].includes(currentUser.role)||task.assigneeId===currentUser.id||(currentUser.role==="Senior Employee"&&task.createdById===currentUser.id))))} /><ActivityHistory key={`activity-${selectedTaskId}`} taskId={selectedTaskId} /></TaskDetailsPanel>}
+      {selectedTaskId && visibleTasks.some((task) => task.id === selectedTaskId) && <TaskDetailsPanel inactive={chatOpen || modal === "task" || Boolean(confirmRequest)} onClose={() => setSelectedTaskId(null)}>{notice && <p role="status" className="mb-4 rounded-lg bg-indigo-50 p-3 text-sm text-indigo-700">{notice}</p>}{renderTask(visibleTasks.find((task) => task.id === selectedTaskId)!, 0, true)}<TaskAttachments key={`files-${selectedTaskId}`} taskId={selectedTaskId} canUpload={Boolean(visibleTasks.find(task=>task.id===selectedTaskId && !task.archivedAt && (["Admin","Manager"].includes(currentUser.role)||isTaskAssignee(task,currentUser.id)||(currentUser.role==="Senior Employee"&&task.createdById===currentUser.id))))} /><ActivityHistory key={`activity-${selectedTaskId}`} taskId={selectedTaskId} /></TaskDetailsPanel>}
 
       {chatOpen && (
         <aside role="dialog" aria-modal="true" aria-label="Task chats" className="fixed inset-0 z-40 flex h-[100dvh] w-full flex-col overflow-hidden bg-white shadow-2xl sm:inset-auto sm:bottom-5 sm:right-5 sm:h-[min(640px,85dvh)] sm:w-[min(420px,calc(100vw-40px))] sm:rounded-2xl sm:border sm:border-indigo-100">
@@ -1523,7 +1529,7 @@ export default function Home() {
       )}
 
       {modal === "task" && ["Admin", "Manager", "Senior Employee"].includes(currentUser.role) && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center overflow-y-auto bg-slate-900/40 p-4"><div className="max-h-[92dvh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white p-6 shadow-xl"><div className="flex items-center justify-between"><div><h2 className="text-xl font-bold">{editingTaskId ? "Edit task" : "Create task or subtask"}</h2><p className="mt-1 text-sm text-slate-500">Assign work to a team member. Senior employees can assign subtasks to employees.</p></div><button onClick={() => setModal(null)} className="text-xl text-slate-400">×</button></div><form onSubmit={createTask} className="mt-6 space-y-4">{taskFormError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{taskFormError}</p>}<input autoFocus value={newTaskTitle} onChange={(event) => setNewTaskTitle(event.target.value)} placeholder="Task title" className="w-full rounded-lg border px-4 py-3" /><textarea value={newTaskDescription} onChange={(event) => setNewTaskDescription(event.target.value)} placeholder="Task description" rows={2} className="w-full resize-none rounded-lg border px-4 py-3" /><div className="grid gap-4 md:grid-cols-2"><select aria-label="Task project" disabled={Boolean(editingTaskId) || currentUser.role === "Senior Employee"} value={newTaskProjectId || projects[0]?.id} onChange={(event) => { setNewTaskProjectId(event.target.value); setNewTaskParentId(""); setNewTaskBlockedById(""); }} className="rounded-lg border px-4 py-3">{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select><select aria-label="Assign to" value={newTaskAssigneeId || employees[0]?.id} onChange={(event) => setNewTaskAssigneeId(event.target.value)} className="rounded-lg border px-4 py-3">{employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name} ({visibleTasks.filter(task => task.assigneeId === employee.id && task.status !== "Completed").length} active)</option>)}</select><select aria-label="Parent task" disabled={Boolean(editingTaskId) || currentUser.role === "Senior Employee"} value={newTaskParentId} onChange={(event) => setNewTaskParentId(event.target.value)} className="rounded-lg border px-4 py-3"><option value="">Top-level task</option>{tasks.filter((task) => (currentUser.role === "Senior Employee" ? task.assigneeId === currentUser.id : !task.parentId) && task.projectId === (newTaskProjectId || projects[0]?.id)).map((task) => <option key={task.id} value={task.id}>Subtask of: {task.title}</option>)}</select><select value={newTaskPriority} onChange={(event) => setNewTaskPriority(event.target.value as Task["priority"])} className="rounded-lg border px-4 py-3"><option>High</option><option>Medium</option><option>Low</option></select></div><label className="block text-sm font-semibold text-slate-700">Blocked by<select aria-label="Task dependency" value={newTaskBlockedById} onChange={(event) => setNewTaskBlockedById(event.target.value)} className="mt-1 w-full rounded-lg border px-4 py-3 font-normal"><option value="">No dependency</option>{tasks.filter(task => !task.archivedAt && task.id !== editingTaskId && task.projectId === (newTaskProjectId || projects[0]?.id)).map(task => <option key={task.id} value={task.id}>{task.title} · {task.status}</option>)}</select><span className="mt-1 block text-xs font-normal text-slate-500">The task cannot be completed until this dependency is complete.</span></label><div className="grid gap-4 md:grid-cols-2"><label className="flex items-center gap-3 rounded-lg border px-4 py-3 text-sm font-semibold"><input type="checkbox" checked={newTaskMilestone} onChange={(event) => setNewTaskMilestone(event.target.checked)} /> Project milestone</label><label className="text-sm font-semibold text-slate-700">Repeat<select value={newTaskRecurrence} onChange={(event) => setNewTaskRecurrence(event.target.value as Task["recurrence"])} className="mt-1 w-full rounded-lg border px-4 py-3 font-normal"><option value="none">Does not repeat</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label></div>{newTaskMilestone && <label className="block text-sm font-semibold text-slate-700">Milestone date<input required type="date" value={newTaskMilestoneDate} onChange={(event) => setNewTaskMilestoneDate(event.target.value)} className="mt-1 w-full rounded-lg border px-4 py-3 font-normal" /></label>}<div className="grid gap-4 md:grid-cols-2"><label className="block text-sm font-semibold text-slate-700">Start date<input required type="date" value={newTaskStart} onChange={(event) => { setNewTaskStart(event.target.value); if (event.target.value > newTaskDue) setNewTaskDue(event.target.value); }} className="mt-1 w-full rounded-lg border px-4 py-3 font-normal" /></label><label className="block text-sm font-semibold text-slate-700">Due date<input required min={newTaskStart} type="date" value={newTaskDue} onChange={(event) => setNewTaskDue(event.target.value)} className="mt-1 w-full rounded-lg border px-4 py-3 font-normal" /></label></div>{employees.length === 0 && <p className="text-sm text-amber-700">No eligible employees are available. Ask an admin to create an Employee account.</p>}<button disabled={employees.length === 0 || savingTask} className="w-full rounded-lg bg-indigo-600 px-4 py-3 font-semibold text-white disabled:opacity-40">{savingTask ? "Saving…" : editingTaskId ? "Save changes" : "Create and assign task"}</button></form></div></div>
+        <div className="fixed inset-0 z-40 flex items-center justify-center overflow-y-auto bg-slate-900/40 p-4"><div className="max-h-[92dvh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white p-6 shadow-xl"><div className="flex items-center justify-between"><div><h2 className="text-xl font-bold">{editingTaskId ? "Edit task" : "Create task or subtask"}</h2><p className="mt-1 text-sm text-slate-500">Assign work to a team member. Senior employees can assign subtasks to employees.</p></div><button onClick={() => setModal(null)} className="text-xl text-slate-400">×</button></div><form onSubmit={createTask} className="mt-6 space-y-4">{taskFormError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{taskFormError}</p>}<input autoFocus value={newTaskTitle} onChange={(event) => setNewTaskTitle(event.target.value)} placeholder="Task title" className="w-full rounded-lg border px-4 py-3" /><textarea value={newTaskDescription} onChange={(event) => setNewTaskDescription(event.target.value)} placeholder="Task description" rows={2} className="w-full resize-none rounded-lg border px-4 py-3" /><div className="grid gap-4 md:grid-cols-2"><select aria-label="Task project" disabled={Boolean(editingTaskId) || currentUser.role === "Senior Employee"} value={newTaskProjectId || projects[0]?.id} onChange={(event) => { setNewTaskProjectId(event.target.value); setNewTaskParentId(""); setNewTaskBlockedById(""); }} className="rounded-lg border px-4 py-3">{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select><fieldset className="rounded-lg border px-4 py-3"><legend className="px-1 text-xs font-semibold text-slate-600">Assign to one or more employees</legend><div className="mt-1 grid max-h-32 gap-2 overflow-y-auto sm:grid-cols-2">{employees.map((employee) => <label key={employee.id} className="flex cursor-pointer items-center gap-2 text-sm"><input type="checkbox" checked={newTaskAssigneeIds.includes(employee.id)} onChange={(event) => setNewTaskAssigneeIds((current) => event.target.checked ? [...new Set([...current, employee.id])] : current.filter((id) => id !== employee.id))} /><span>{employee.name} ({visibleTasks.filter(task => isTaskAssignee(task, employee.id) && task.status !== "Completed").length} active)</span></label>)}</div></fieldset><select aria-label="Parent task" disabled={Boolean(editingTaskId) || currentUser.role === "Senior Employee"} value={newTaskParentId} onChange={(event) => setNewTaskParentId(event.target.value)} className="rounded-lg border px-4 py-3"><option value="">Top-level task</option>{tasks.filter((task) => (currentUser.role === "Senior Employee" ? isTaskAssignee(task, currentUser.id) : !task.parentId) && task.projectId === (newTaskProjectId || projects[0]?.id)).map((task) => <option key={task.id} value={task.id}>Subtask of: {task.title}</option>)}</select><select value={newTaskPriority} onChange={(event) => setNewTaskPriority(event.target.value as Task["priority"])} className="rounded-lg border px-4 py-3"><option>High</option><option>Medium</option><option>Low</option></select></div><label className="block text-sm font-semibold text-slate-700">Blocked by<select aria-label="Task dependency" value={newTaskBlockedById} onChange={(event) => setNewTaskBlockedById(event.target.value)} className="mt-1 w-full rounded-lg border px-4 py-3 font-normal"><option value="">No dependency</option>{tasks.filter(task => !task.archivedAt && task.id !== editingTaskId && task.projectId === (newTaskProjectId || projects[0]?.id)).map(task => <option key={task.id} value={task.id}>{task.title} · {task.status}</option>)}</select><span className="mt-1 block text-xs font-normal text-slate-500">The task cannot be completed until this dependency is complete.</span></label><div className="grid gap-4 md:grid-cols-2"><label className="flex items-center gap-3 rounded-lg border px-4 py-3 text-sm font-semibold"><input type="checkbox" checked={newTaskMilestone} onChange={(event) => setNewTaskMilestone(event.target.checked)} /> Project milestone</label><label className="text-sm font-semibold text-slate-700">Repeat<select value={newTaskRecurrence} onChange={(event) => setNewTaskRecurrence(event.target.value as Task["recurrence"])} className="mt-1 w-full rounded-lg border px-4 py-3 font-normal"><option value="none">Does not repeat</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label></div>{newTaskMilestone && <label className="block text-sm font-semibold text-slate-700">Milestone date<input required type="date" value={newTaskMilestoneDate} onChange={(event) => setNewTaskMilestoneDate(event.target.value)} className="mt-1 w-full rounded-lg border px-4 py-3 font-normal" /></label>}<div className="grid gap-4 md:grid-cols-2"><label className="block text-sm font-semibold text-slate-700">Start date<input required type="date" value={newTaskStart} onChange={(event) => { setNewTaskStart(event.target.value); if (event.target.value > newTaskDue) setNewTaskDue(event.target.value); }} className="mt-1 w-full rounded-lg border px-4 py-3 font-normal" /></label><label className="block text-sm font-semibold text-slate-700">Due date<input required min={newTaskStart} type="date" value={newTaskDue} onChange={(event) => setNewTaskDue(event.target.value)} className="mt-1 w-full rounded-lg border px-4 py-3 font-normal" /></label></div>{employees.length === 0 && <p className="text-sm text-amber-700">No eligible employees are available. Ask an admin to create an Employee account.</p>}<button disabled={employees.length === 0 || savingTask} className="w-full rounded-lg bg-indigo-600 px-4 py-3 font-semibold text-white disabled:opacity-40">{savingTask ? "Saving…" : editingTaskId ? "Save changes" : "Create and assign task"}</button></form></div></div>
       )}
     </main>
   );

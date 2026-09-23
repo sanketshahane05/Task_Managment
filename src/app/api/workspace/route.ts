@@ -18,8 +18,8 @@ const actionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("delete_project"), projectId: z.string().min(1) }),
   z.object({ action: z.literal("archive_project"), projectId: z.string().min(1) }),
   z.object({ action: z.literal("restore_project"), projectId: z.string().min(1) }),
-  z.object({ action: z.literal("create_task"), title: z.string().trim().min(2).max(200), description: z.string().trim().max(5000).default(""), projectId: z.string().min(1), assigneeId: z.string().uuid(), parentId: z.string().nullable().optional(), blockedById: z.string().nullable().optional(), milestone: z.boolean().default(false), milestoneDate: z.iso.date().nullable().optional(), recurrence: recurrenceSchema.default("none"), priority: prioritySchema, startDate: z.iso.date(), dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }),
-  z.object({ action: z.literal("edit_task"), taskId: z.string().min(1), title: z.string().trim().min(2).max(200), description: z.string().trim().max(5000), assigneeId: z.string().uuid(), blockedById: z.string().nullable().optional(), milestone: z.boolean().default(false), milestoneDate: z.iso.date().nullable().optional(), recurrence: recurrenceSchema.default("none"), priority: prioritySchema, startDate: z.iso.date(), dueDate: z.iso.date() }),
+  z.object({ action: z.literal("create_task"), title: z.string().trim().min(2).max(200), description: z.string().trim().max(5000).default(""), projectId: z.string().min(1), assigneeIds: z.array(z.string().uuid()).min(1).max(50), parentId: z.string().nullable().optional(), blockedById: z.string().nullable().optional(), milestone: z.boolean().default(false), milestoneDate: z.iso.date().nullable().optional(), recurrence: recurrenceSchema.default("none"), priority: prioritySchema, startDate: z.iso.date(), dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }),
+  z.object({ action: z.literal("edit_task"), taskId: z.string().min(1), title: z.string().trim().min(2).max(200), description: z.string().trim().max(5000), assigneeIds: z.array(z.string().uuid()).min(1).max(50), blockedById: z.string().nullable().optional(), milestone: z.boolean().default(false), milestoneDate: z.iso.date().nullable().optional(), recurrence: recurrenceSchema.default("none"), priority: prioritySchema, startDate: z.iso.date(), dueDate: z.iso.date() }),
   z.object({ action: z.literal("delete_task"), taskId: z.string().min(1) }),
   z.object({ action: z.literal("restore_task"), taskId: z.string().min(1) }),
   z.object({ action: z.literal("add_note"), taskId: z.string().min(1), text: z.string().trim().min(1).max(5000) }),
@@ -49,7 +49,8 @@ function projectFromRow(project: Record<string, unknown>) {
   return { id: project.id, name: project.name, description: project.description };
 }
 function taskFromRow(task: Record<string, unknown>) {
-  return { id: task.id, title: task.title, projectId: task.project_id, description: task.description, due: task.due, priority: task.priority, status: taskStatusFromRow(task.status), progress: task.progress, assigneeId: task.assignee_id, createdById: task.created_by_id, parentId: task.parent_id, blockedById: task.blocked_by_id, milestone: task.milestone ?? false, milestoneDate: task.milestone_date, recurrence: task.recurrence ?? "none", createdAt: task.created_at, assignedAt: task.assigned_at, dueDate: task.due_date, startDate: task.start_date, completedAt: task.completed_at, archivedAt: task.archived_at, reviewEnabled: "review_state" in task, reviewState: task.review_state ?? "none", reviewNote: task.review_note ?? "", reviewedBy: task.reviewed_by, reviewedAt: task.reviewed_at };
+  const assigneeIds = Array.isArray(task.assignee_ids) && task.assignee_ids.length ? task.assignee_ids : [task.assignee_id];
+  return { id: task.id, title: task.title, projectId: task.project_id, description: task.description, due: task.due, priority: task.priority, status: taskStatusFromRow(task.status), progress: task.progress, assigneeId: task.assignee_id, assigneeIds, createdById: task.created_by_id, parentId: task.parent_id, blockedById: task.blocked_by_id, milestone: task.milestone ?? false, milestoneDate: task.milestone_date, recurrence: task.recurrence ?? "none", createdAt: task.created_at, assignedAt: task.assigned_at, dueDate: task.due_date, startDate: task.start_date, completedAt: task.completed_at, archivedAt: task.archived_at, reviewEnabled: "review_state" in task, reviewState: task.review_state ?? "none", reviewNote: task.review_note ?? "", reviewedBy: task.reviewed_by, reviewedAt: task.reviewed_at };
 }
 function noteFromRow(note: Record<string, unknown>) {
   return { id: note.id, taskId: note.task_id, text: note.text, authorId: note.author_id, createdAt: note.created_at, readBy: note.read_by ?? [] };
@@ -217,12 +218,14 @@ export async function POST(request: Request) {
     if (input.action === "create_task") {
       if (!["Admin", "Manager", "Senior Employee"].includes(context.profile.role)) return fail("You cannot create tasks.", 403);
       if (context.profile.role === "Admin" && !process.env.SUPABASE_SERVICE_ROLE_KEY) return fail("The server service key is required for admins to create tasks.", 503);
-      const { data: assignee } = await context.client.from("profiles").select("role, active").eq("id", input.assigneeId).single();
-      if (!assignee?.active || !["Senior Employee", "Employee"].includes(assignee.role)) return fail("Choose an active employee.");
+      const assigneeIds = [...new Set(input.assigneeIds)];
+      const { data: assignees } = await context.client.from("profiles").select("id, role, active").in("id", assigneeIds);
+      if (assignees?.length !== assigneeIds.length || assignees.some((assignee) => !assignee.active || !["Senior Employee", "Employee"].includes(assignee.role))) return fail("Choose only active employees.");
       if (input.parentId) {
-        const { data: parent } = await context.client.from("tasks").select("project_id, assignee_id, archived_at").eq("id", input.parentId).single();
+        const { data: parent } = await context.client.from("tasks").select("project_id, assignee_id, assignee_ids, archived_at").eq("id", input.parentId).single();
         if (!parent || parent.archived_at || parent.project_id !== input.projectId) return fail("Invalid parent task.", 403);
-        if (context.profile.role === "Senior Employee" && (parent.assignee_id !== context.user.id || assignee.role !== "Employee")) return fail("You may delegate only your assigned tasks to employees.", 403);
+        const parentAssignees = parent.assignee_ids?.length ? parent.assignee_ids : [parent.assignee_id];
+        if (context.profile.role === "Senior Employee" && (!parentAssignees.includes(context.user.id) || assignees.some((assignee) => assignee.role !== "Employee"))) return fail("You may delegate only your assigned tasks to employees.", 403);
       } else if (context.profile.role === "Senior Employee") return fail("Senior employees must select an assigned parent task.", 403);
       if (input.blockedById) {
         const { data: blocker } = await context.client.from("tasks").select("id, project_id, archived_at").eq("id", input.blockedById).single();
@@ -231,8 +234,8 @@ export async function POST(request: Request) {
       if (input.dueDate < input.startDate) return fail("Due date must be on or after the start date.");
       const taskClient = context.profile.role === "Admin" ? createSupabaseAdminClient() : context.client;
       const planningFields = input.blockedById || input.milestone || input.recurrence !== "none" ? { blocked_by_id: input.blockedById || null, milestone: input.milestone, milestone_date: input.milestone ? input.milestoneDate || input.dueDate : null, recurrence: input.recurrence } : {};
-      const { error } = await taskClient.from("tasks").insert({ id: `task-${crypto.randomUUID()}`, title: input.title, description: input.description || "No description yet.", project_id: input.projectId, assignee_id: input.assigneeId, created_by_id: context.user.id, parent_id: input.parentId || null, ...planningFields, priority: input.priority, due: input.dueDate, due_date: input.dueDate, start_date: input.startDate, status: "Not started", progress: 0 });
-      if (error) return fail(error.message);
+      const { error } = await taskClient.from("tasks").insert({ id: `task-${crypto.randomUUID()}`, title: input.title, description: input.description || "No description yet.", project_id: input.projectId, assignee_id: assigneeIds[0], assignee_ids: assigneeIds, created_by_id: context.user.id, parent_id: input.parentId || null, ...planningFields, priority: input.priority, due: input.dueDate, due_date: input.dueDate, start_date: input.startDate, status: "Not started", progress: 0 });
+      if (error) return fail(error.code === "PGRST204" ? "Multiple assignees need the latest database migration applied." : error.message);
       return NextResponse.json({ ok: true });
     }
 
@@ -267,8 +270,9 @@ export async function POST(request: Request) {
     if (input.action === "edit_task") {
       if (!["Admin", "Manager"].includes(context.profile.role)) return fail("Only admins and managers can edit assignments.", 403);
       if (input.dueDate < input.startDate) return fail("Due date must be on or after the start date.");
-      const { data: assignee } = await context.client.from("profiles").select("role, active").eq("id", input.assigneeId).single();
-      if (!assignee?.active || !["Senior Employee", "Employee"].includes(assignee.role)) return fail("Choose an active employee.");
+      const assigneeIds = [...new Set(input.assigneeIds)];
+      const { data: assignees } = await context.client.from("profiles").select("id, role, active").in("id", assigneeIds);
+      if (assignees?.length !== assigneeIds.length || assignees.some((assignee) => !assignee.active || !["Senior Employee", "Employee"].includes(assignee.role))) return fail("Choose only active employees.");
       const { data: task } = await context.client.from("tasks").select("*").eq("id", input.taskId).single();
       if (!task || task.archived_at) return fail("Active task not found.", 404);
       if (task.review_state === "pending" || isCompletedStatus(task.status)) return fail("Request changes before editing submitted work, or create a follow-up task for completed work.");
@@ -278,15 +282,18 @@ export async function POST(request: Request) {
         if (!blocker || blocker.archived_at || blocker.project_id !== task.project_id) return fail("Choose an active dependency in the same project.");
       }
       const planningFields = "blocked_by_id" in task || input.blockedById || input.milestone || input.recurrence !== "none" ? { blocked_by_id: input.blockedById || null, milestone: input.milestone, milestone_date: input.milestone ? input.milestoneDate || input.dueDate : null, recurrence: input.recurrence } : {};
-      const { data, error } = await context.client.from("tasks").update({ title: input.title, description: input.description, assignee_id: input.assigneeId, ...planningFields, priority: input.priority, start_date: input.startDate, due_date: input.dueDate, due: input.dueDate, ...(task.assignee_id !== input.assigneeId ? { assigned_at: new Date().toISOString() } : {}) }).eq("id", input.taskId).is("archived_at", null).select("id").single();
-      if (error || !data) return fail(error?.message ?? "Unable to edit task.");
+      const previousAssignees = task.assignee_ids?.length ? task.assignee_ids : [task.assignee_id];
+      const assignmentsChanged = previousAssignees.length !== assigneeIds.length || previousAssignees.some((id: string) => !assigneeIds.includes(id));
+      const { data, error } = await context.client.from("tasks").update({ title: input.title, description: input.description, assignee_id: assigneeIds[0], assignee_ids: assigneeIds, ...planningFields, priority: input.priority, start_date: input.startDate, due_date: input.dueDate, due: input.dueDate, ...(assignmentsChanged ? { assigned_at: new Date().toISOString() } : {}) }).eq("id", input.taskId).is("archived_at", null).select("id").single();
+      if (error || !data) return fail(error?.code === "PGRST204" ? "Multiple assignees need the latest database migration applied." : error?.message ?? "Unable to edit task.");
       return NextResponse.json({ ok: true });
     }
 
     if (input.action === "add_note") {
-      const { data: task, error: taskError } = await context.client.from("tasks").select("assignee_id, created_by_id").eq("id", input.taskId).single();
+      const { data: task, error: taskError } = await context.client.from("tasks").select("assignee_id, assignee_ids, created_by_id").eq("id", input.taskId).single();
       if (taskError || !task) return fail("Task not found.", 404);
-      if (context.profile.role !== "Manager" && task.assignee_id !== context.user.id && !(context.profile.role === "Senior Employee" && task.created_by_id === context.user.id)) return fail("You cannot message this task.", 403);
+      const taskAssignees = task.assignee_ids?.length ? task.assignee_ids : [task.assignee_id];
+      if (!["Admin", "Manager"].includes(context.profile.role) && !taskAssignees.includes(context.user.id) && !(context.profile.role === "Senior Employee" && task.created_by_id === context.user.id)) return fail("You cannot message this task.", 403);
       const { error } = await context.client.from("notes").insert({ id: `note-${crypto.randomUUID()}`, task_id: input.taskId, text: input.text, author_id: context.user.id, read_by: [context.user.id] });
       if (error) return fail(error.message);
       return NextResponse.json({ ok: true });
@@ -301,7 +308,8 @@ export async function POST(request: Request) {
     if (input.action === "save_employee_update") {
       if (!["Employee", "Senior Employee"].includes(context.profile.role)) return fail("Only employees can save daily updates.", 403);
       const { data: task, error: taskError } = await context.client.from("tasks").select("*").eq("id", input.taskId).single();
-      if (taskError || !task || task.assignee_id !== context.user.id) return fail("Task not found.", 404);
+      const taskAssignees = task?.assignee_ids?.length ? task.assignee_ids : task ? [task.assignee_id] : [];
+      if (taskError || !task || !taskAssignees.includes(context.user.id)) return fail("Task not found.", 404);
       const createdAt = new Date().toISOString();
       const completedAt = input.status === "Completed" ? task.completed_at ?? createdAt : null;
       const update = { status: input.status, progress: input.progress, completed_at: completedAt };

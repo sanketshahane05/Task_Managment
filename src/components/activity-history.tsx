@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 type Event = {id: number; entity_label: string; actor_name: string; action: string; created_at: string; changes: Record<string, {before: unknown; after: unknown}>};
-const labels: Record<string,string> = {assignee_id:'Assigned to',project_id:'Project',parent_id:'Parent task',start_date:'Start date',due_date:'Due date',archived_at:'Archived',review_state:'Review status',review_note:'Review feedback'};
+const labels: Record<string,string> = {assignee_id:'Primary assignee',assignee_ids:'Assigned team',project_id:'Project',parent_id:'Parent task',start_date:'Start date',due_date:'Due date',archived_at:'Archived',review_state:'Review status',review_note:'Review feedback'};
 const display = (value: unknown) => value === null || value === undefined ? 'Not set' : typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value);
 export default function ActivityHistory({ taskId }: {taskId?: string}) {
   const [events,setEvents]=useState<Event[]>([]);
@@ -34,3 +34,4 @@ export default function ActivityHistory({ taskId }: {taskId?: string}) {
     {cursor&&<button disabled={busy} onClick={()=>{setBusy(true);void load(cursor);}} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Load older changes</button>}
   </section>;
 }
+

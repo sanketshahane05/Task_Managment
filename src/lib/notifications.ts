@@ -1,5 +1,5 @@
 type NotificationTask = {
-  id: string; title: string; projectId: string; assigneeId: string; createdById: string;
+  id: string; title: string; projectId: string; assigneeId: string; assigneeIds?: string[]; createdById: string;
   parentId: string | null; status: string; dueDate?: string; assignedAt?: string;
   createdAt?: string; archivedAt?: string; reviewState?: string;
 };
@@ -20,7 +20,7 @@ export function buildNotifications(tasks: NotificationTask[], notes: Notificatio
   const alerts: WorkNotification[] = [];
   for (const task of tasks) {
     if (task.archivedAt) continue;
-    const mine = task.assigneeId === user.id;
+    const mine = (task.assigneeIds?.length ? task.assigneeIds : [task.assigneeId]).includes(user.id);
     const delegated = user.role === "Senior Employee" && task.createdById === user.id && Boolean(task.parentId);
     const add = (kind: WorkNotification["kind"], label: string, date: string, urgent = false) => alerts.push({ id: `${kind}:${task.id}`, taskId: task.id, projectId: task.projectId, title: task.title, kind, label, date, urgent });
     const unread = notes.filter(note => note.taskId === task.id && note.authorId !== user.id && !note.readBy?.includes(user.id));
@@ -36,3 +36,4 @@ export function buildNotifications(tasks: NotificationTask[], notes: Notificatio
   }
   return alerts.sort((a, b) => Number(b.urgent) - Number(a.urgent) || (a.kind === "Deadlines" && b.kind === "Deadlines" ? a.date.localeCompare(b.date) : b.date.localeCompare(a.date)) || a.id.localeCompare(b.id));
 }
+
