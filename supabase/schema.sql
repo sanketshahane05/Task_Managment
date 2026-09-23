@@ -469,7 +469,14 @@ create index if not exists tasks_assignee_ids_idx on public.tasks using gin (ass
 create or replace function public.normalize_task_assignees()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
-  new.assignee_ids := array(select distinct value from unnest(coalesce(new.assignee_ids, '{}'::uuid[])) value where value is not null);
+  new.assignee_ids := (
+    select array_agg(item.id order by item.first_position)
+    from (
+      select id, min(position) first_position
+      from unnest(coalesce(new.assignee_ids, '{}'::uuid[])) with ordinality entry(id, position)
+      where id is not null group by id
+    ) item
+  );
   if cardinality(new.assignee_ids) = 0 then
     new.assignee_ids := array[new.assignee_id];
   end if;
@@ -480,7 +487,7 @@ begin
       where profile.id is null or not profile.active or profile.role not in ('Senior Employee','Employee')
     ) then raise exception 'Choose only active employees' using errcode = '23514'; end if;
   end if;
-  new.assignee_id := new.assignee_ids[1];
+  new.assignee_id := (new.assignee_ids)[1];
   return new;
 end;
 $$;
