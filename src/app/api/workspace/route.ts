@@ -218,13 +218,18 @@ export async function POST(request: Request) {
       if (!["Admin", "Manager", "Senior Employee"].includes(context.profile.role)) return fail("You cannot create tasks.", 403);
       const assigneeIds = [...new Set(input.assigneeIds)];
       const { data: assignees } = await context.client.from("profiles").select("id, role, active").in("id", assigneeIds);
-      if (assignees?.length !== assigneeIds.length || assignees.some((assignee) => !assignee.active || !["Senior Employee", "Employee"].includes(assignee.role))) return fail("Choose only active employees.");
+      if (assignees?.length !== assigneeIds.length || assignees.some((assignee) => !assignee.active)) return fail("Choose only active users.");
+      const assignsOtherUsers = assigneeIds.some((id) => id !== context.user.id);
+      const invalidOtherAssignee = assignees.some((assignee) => assignee.id !== context.user.id && !["Senior Employee", "Employee"].includes(assignee.role));
+      if (invalidOtherAssignee) return fail("You may assign administrators and managers only to themselves.", 403);
+      if (context.profile.role === "Employee" && assignsOtherUsers) return fail("Employees may assign tasks and subtasks only to themselves.", 403);
       if (input.parentId) {
         const { data: parent } = await context.client.from("tasks").select("project_id, assignee_id, assignee_ids, archived_at").eq("id", input.parentId).single();
         if (!parent || parent.archived_at || parent.project_id !== input.projectId) return fail("Invalid parent task.", 403);
         const parentAssignees = parent.assignee_ids?.length ? parent.assignee_ids : [parent.assignee_id];
-        if (context.profile.role === "Senior Employee" && (!parentAssignees.includes(context.user.id) || assignees.some((assignee) => assignee.role !== "Employee"))) return fail("You may delegate only your assigned tasks to employees.", 403);
-      } else if (context.profile.role === "Senior Employee") return fail("Senior employees must select an assigned parent task.", 403);
+        if (["Senior Employee", "Employee"].includes(context.profile.role) && !parentAssignees.includes(context.user.id)) return fail("You may add subtasks only to work assigned to you.", 403);
+        if (context.profile.role === "Senior Employee" && assignsOtherUsers && assignees.some((assignee) => assignee.id !== context.user.id && assignee.role !== "Employee")) return fail("You may delegate only to employees.", 403);
+      } else if (context.profile.role === "Senior Employee" && assignsOtherUsers) return fail("Senior employees must select an assigned parent task when delegating work.", 403);
       if (input.blockedById) {
         const { data: blocker } = await context.client.from("tasks").select("id, project_id, archived_at").eq("id", input.blockedById).single();
         if (!blocker || blocker.archived_at || blocker.project_id !== input.projectId) return fail("Choose an active dependency in the same project.");
@@ -268,7 +273,7 @@ export async function POST(request: Request) {
       if (input.dueDate < input.startDate) return fail("Due date must be on or after the start date.");
       const assigneeIds = [...new Set(input.assigneeIds)];
       const { data: assignees } = await context.client.from("profiles").select("id, role, active").in("id", assigneeIds);
-      if (assignees?.length !== assigneeIds.length || assignees.some((assignee) => !assignee.active || !["Senior Employee", "Employee"].includes(assignee.role))) return fail("Choose only active employees.");
+      if (assignees?.length !== assigneeIds.length || assignees.some((assignee) => !assignee.active || (assignee.id !== context.user.id && !["Senior Employee", "Employee"].includes(assignee.role)))) return fail("Choose only active eligible users.");
       const { data: task } = await context.client.from("tasks").select("*").eq("id", input.taskId).single();
       if (!task || task.archived_at) return fail("Active task not found.", 404);
       if (task.review_state === "pending" || isCompletedStatus(task.status)) return fail("Request changes before editing submitted work, or create a follow-up task for completed work.");
